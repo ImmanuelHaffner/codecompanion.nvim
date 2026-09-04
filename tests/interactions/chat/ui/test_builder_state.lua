@@ -110,4 +110,43 @@ T["Builder state"]["tool fold is placed on the content line when the tool messag
   h.eq(res.fold.type, "tool")
 end
 
+T["Builder state"]["tool fold keeps its last line when a later message is written"] = function()
+  -- The fold ends on the buffer's last line, so the next write starts there.
+  -- Splicing into that line truncates the fold, dropping the closing fence of
+  -- the tool's output below the fold instead of inside it.
+  local res = child.lua([[
+    require("codecompanion.config").interactions.chat.tools.opts.folds.enabled = true
+
+    _G.chat:add_buf_message(
+      { role = "llm", content = "tool line 1\ntool line 2\ntool line 3" },
+      { type = _G.MT.TOOL_MESSAGE }
+    )
+    vim.wait(200, function() return false end)
+
+    local bufnr = _G.chat.bufnr
+    local folds = require("codecompanion.interactions.chat.ui.folds").fold_summaries[bufnr] or {}
+    local fold_row0 = nil
+    for row in pairs(folds) do
+      fold_row0 = math.max(fold_row0 or -1, row)
+    end
+
+    local winnr = vim.fn.win_findbuf(bufnr)[1]
+    local function last_folded_line()
+      local last_row = nil
+      vim.api.nvim_win_call(winnr, function()
+        last_row = vim.fn.foldclosedend(fold_row0 + 1)
+      end)
+      return vim.api.nvim_buf_get_lines(bufnr, last_row - 1, last_row, true)[1]
+    end
+
+    local before = last_folded_line()
+    _G.chat:add_buf_message({ role = "user", content = "" })
+
+    return { before = before, after = last_folded_line() }
+  ]])
+
+  h.eq(res.before, "tool line 3", "The fold should cover the whole tool block")
+  h.eq(res.after, "tool line 3", "A later write should leave the fold covering the whole tool block")
+end
+
 return T
