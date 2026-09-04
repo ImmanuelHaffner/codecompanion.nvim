@@ -235,7 +235,14 @@ function Builder:_write(lines, opts, write)
   local column = opts.insert_at and 0 or last_column
   local was_following = self.chat.ui:is_following()
 
-  api.nvim_buf_set_text(self.chat.bufnr, insert_line, column, insert_line, column, lines)
+  -- NOTE: Neovim treats a splice which splits a line as a deletion of that
+  -- line, so a fold ending there loses its last row. A blank first line adds
+  -- nothing to the line it merges into, so append the rest below it instead
+  if not opts.insert_at and lines[1] == BLANK then
+    api.nvim_buf_set_lines(self.chat.bufnr, insert_line + 1, insert_line + 1, false, vim.list_slice(lines, 2))
+  else
+    api.nvim_buf_set_text(self.chat.bufnr, insert_line, column, insert_line, column, lines)
+  end
 
   local icon_id = self:_apply_icon(insert_line, opts, write.content_start)
 
