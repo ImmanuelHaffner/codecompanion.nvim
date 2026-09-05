@@ -42,7 +42,7 @@ end
 ---@field folds CodeCompanion.Chat.UI.Folds The folds for the chat
 ---@field header_ns number The namespace for the header
 ---@field roles table The roles in the chat
----@field winnr number The window number of the chat
+---@field winnr number|nil The window number of the chat
 ---@field settings table The settings for the chat
 ---@field title string|nil The title of the chat window
 ---@field window_opts? table The window configuration options for the chat buffer
@@ -162,6 +162,25 @@ function UI.new(args)
   return self
 end
 
+---Resolve the window configuration for this chat, applying any per-chat overrides
+---@return table
+function UI:resolve_window()
+  if self.window_opts then
+    return vim.tbl_deep_extend("force", {}, config.display.chat.window, self.window_opts)
+  end
+  return vim.deepcopy(config.display.chat.window)
+end
+
+---Resolve the title to display on the chat window
+---@param window table The resolved window configuration
+---@return string
+function UI:window_title(window)
+  if self.title then
+    return string.format(" %s ", self.title)
+  end
+  return window.title or " CodeCompanion "
+end
+
 ---Open/create the chat window
 ---@param opts? table
 ---@return CodeCompanion.Chat.UI|nil
@@ -189,17 +208,8 @@ function UI:open(opts)
       self.window_opts = opts.window_opts
     end
   end
-  local window
-  if self.window_opts then
-    window = vim.tbl_deep_extend("force", {}, config.display.chat.window, self.window_opts)
-  else
-    window = vim.deepcopy(config.display.chat.window)
-  end
-
-  local title = window.title or " CodeCompanion "
-  if self.title then
-    title = string.format(" %s ", self.title)
-  end
+  local window = self:resolve_window()
+  local title = self:window_title(window)
 
   self.winnr = shared_ui.open(self.chat_bufnr, window, {
     title = title,
@@ -229,17 +239,80 @@ function UI:open(opts)
   return self
 end
 
----Hide the chat buffer from view
----@return nil
-function UI:hide()
-  local layout
-  if self.window_opts then
-    layout = vim.tbl_deep_extend("force", {}, config.display.chat.window, self.window_opts).layout
-  else
-    layout = config.display.chat.window.layout
+---Display the chat in a window that already exists, leaving that window's
+---geometry and position exactly as the user left them
+---@param winnr number The window to display the chat in
+---@return CodeCompanion.Chat.UI|nil
+function UI:show(winnr)
+  if not winnr or not api.nvim_win_is_valid(winnr) then
+    return
+  end
+  if self:is_visible() then
+    return self
   end
 
-  shared_ui.hide(self.winnr, self.chat_bufnr, layout)
+  local window = self:resolve_window()
+
+  api.nvim_win_set_buf(winnr, self.chat_bufnr)
+  self.winnr = winnr
+
+  -- `open` leaves the cursor in the window it created, so match that: it keeps
+  -- `startinsert` below, and anything an autocmd does, pointed at this chat
+  if api.nvim_get_current_win() ~= winnr then
+    api.nvim_set_current_win(winnr)
+  end
+
+  if config.display.chat.start_in_insert_mode then
+    vim.schedule(function()
+      vim.cmd("startinsert")
+    end)
+  end
+
+  -- A window carries the options of whichever buffer it displayed before, and a
+  -- buffer that has never been shown in it falls back to the global values, so
+  -- the window options have to be applied again
+  if window.opts and not vim.tbl_isempty(window.opts) then
+    require("codecompanion.utils.ui").set_win_options(winnr, window.opts)
+  end
+  vim.bo[self.chat_bufnr].textwidth = 0
+
+  -- A float's border title belongs to the window, so it still names the chat we
+  -- are replacing
+  if window.layout == "float" then
+    local win_config = api.nvim_win_get_config(winnr)
+    win_config.title = self:window_title(window)
+    win_config.title_pos = window.title_pos or "center"
+    pcall(api.nvim_win_set_config, winnr, win_config)
+  end
+
+  if self.cursor.moved_by_user and self.cursor.pos then
+    pcall(api.nvim_win_set_cursor, winnr, self.cursor.pos)
+  else
+    self:follow()
+  end
+
+  self.folds:setup(winnr)
+
+  log:trace("Chat shown with ID %d", self.chat_id)
+  utils.fire("ChatOpened", { bufnr = self.chat_bufnr, id = self.chat_id })
+
+  return self
+end
+
+---Hide the chat buffer from view
+---@param opts? { window_reused?: boolean } Set `window_reused` when another
+---  interaction has taken over our window, so the window is left alone
+---@return nil
+function UI:hide(opts)
+  opts = opts or {}
+
+  if opts.window_reused then
+    -- Someone else displays their buffer in our window now, so all that is left
+    -- to do is drop our claim on it
+    self.winnr = nil
+  else
+    shared_ui.hide(self.winnr, self.chat_bufnr, self:resolve_window().layout)
+  end
 
   utils.fire("ChatHidden", { bufnr = self.chat_bufnr, id = self.chat_id })
 end
