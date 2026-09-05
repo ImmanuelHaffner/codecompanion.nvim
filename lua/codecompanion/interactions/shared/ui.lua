@@ -140,7 +140,9 @@ function M.hide(winnr, bufnr, layout)
     if api.nvim_get_current_buf() == bufnr then
       vim.cmd("hide")
     else
-      if not winnr then
+      -- The window may have been reused for another buffer since we recorded
+      -- it, so only hide it while it still shows ours
+      if not M.is_visible(winnr, bufnr) then
         winnr = ui_utils.buf_get_win(bufnr)
       end
       if winnr then
