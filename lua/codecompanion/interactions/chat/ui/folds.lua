@@ -16,6 +16,11 @@ local CONSTANTS = {
 ---@type table<number, table<number, { content: string, type: "tool"|"context"|"reasoning" }>>
 Folds.fold_summaries = {}
 
+-- Folds requested while the buffer had no window, keyed by buffer and then by
+-- start row, so a fold that gets recreated while hidden only queues once
+---@type table<number, table<number, number>>
+Folds.pending = {}
+
 ---@class CodeCompanion.Chat.UI.FoldConfig
 ---@field type "tool"|"context"|"reasoning"
 ---@field content string
@@ -36,7 +41,33 @@ function Folds:setup(winnr)
       'v:lua.require("codecompanion.interactions.chat.ui.folds").fold_text()',
       { win = winnr }
     )
+    self:_flush_pending(winnr)
   end
+end
+
+---Create the folds that were requested while the buffer was not displayed
+---@param winnr number The window now displaying the buffer
+---@return nil
+function Folds:_flush_pending(winnr)
+  local bufnr = api.nvim_win_get_buf(winnr)
+  local pending = self.pending[bufnr]
+  if not pending then
+    return
+  end
+  self.pending[bufnr] = nil
+
+  local line_count = api.nvim_buf_line_count(bufnr)
+  api.nvim_win_call(winnr, function()
+    for start_row, end_row in pairs(pending) do
+      -- The buffer may have been cleared since, taking the range with it
+      if end_row + 1 <= line_count then
+        local ok, err = pcall(vim.cmd, string.format("%d,%dfold", start_row + 1, end_row + 1))
+        if not ok then
+          log:trace("[Folds] Failed to create deferred fold: %s", err)
+        end
+      end
+    end
+  end)
 end
 
 ---Global method which Neovim calls to display folded text
@@ -160,8 +191,19 @@ function Folds:_create(bufnr, start_row, end_row, fold_config)
     })
   end
 
+  -- Folds belong to a window. `nvim_buf_call` on a buffer that is displayed
+  -- nowhere runs in a temporary window which is discarded immediately after, so
+  -- the fold would be dropped without any error being raised
+  local winnr = require("codecompanion.utils.ui").buf_get_win(bufnr)
+  if not winnr then
+    self.pending[bufnr] = self.pending[bufnr] or {}
+    self.pending[bufnr][start_row] = end_row
+    log:trace("[Folds] Deferred %s fold: buffer %d is not displayed", fold_config.type, bufnr)
+    return
+  end
+
   local ok, err = pcall(function()
-    api.nvim_buf_call(bufnr, function()
+    api.nvim_win_call(winnr, function()
       vim.cmd(string.format("%d,%dfold", start_row + 1, end_row + 1))
     end)
   end)
@@ -319,6 +361,7 @@ function Folds:cleanup(bufnr)
   if self.fold_summaries[bufnr] then
     self.fold_summaries[bufnr] = nil
   end
+  self.pending[bufnr] = nil
 
   api.nvim_buf_clear_namespace(bufnr, CONSTANTS.NS_FOLD_TOOLS, 0, -1)
   api.nvim_buf_clear_namespace(bufnr, CONSTANTS.NS_FOLD_CONTEXT, 0, -1)
