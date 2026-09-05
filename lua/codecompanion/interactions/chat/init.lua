@@ -619,8 +619,14 @@ function Chat.new(args)
       Chat.close_last_chat()
       self.ui:open()
     end,
-    hide = function()
-      self.ui:hide()
+    hide = function(opts)
+      self.ui:hide(opts)
+    end,
+    show = function(winnr)
+      self.ui:show(winnr)
+    end,
+    window = function()
+      return self.ui:resolve_window()
     end,
   })
 
