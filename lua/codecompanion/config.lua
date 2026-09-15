@@ -467,6 +467,7 @@ If you are providing code changes, use the insert_edit_into_file tool (if availa
           opts = {
             auto_save_session = false, -- Save the forked chat as a session straight away?
             contains_code = false,
+            context = "inherit", -- "inherit" the source chat's context or start from the "default" context?
           },
         },
         ["file"] = {
