@@ -1,24 +1,42 @@
 local config = require("codecompanion.config")
 local log = require("codecompanion.utils.log")
+local tags = require("codecompanion.interactions.shared.tags")
 local utils = require("codecompanion.utils")
+
+---The tags on messages carrying context the source chat was granted
+local GRANTED_CONTEXT_TAGS = {
+  [tags.RULES] = true,
+  [tags.TOOL] = true,
+  [tags.TOOL_SYSTEM_PROMPT] = true,
+}
 
 ---Resolve how the fork populates its context
 ---@param opts? { context?: string }
----@return "inherit"
+---@return "inherit"|"default"
 local function resolve_context_mode(opts)
   local mode = (opts or {}).context or "inherit"
-  if mode ~= "inherit" then
+  if mode ~= "inherit" and mode ~= "default" then
     log:warn("Unknown `context` mode `%s` on the fork slash command, inheriting instead", mode)
+    return "inherit"
   end
 
-  return "inherit"
+  return mode
 end
 
 ---Copy the source chat's messages, leaving the fork ready for user input
 ---@param source CodeCompanion.Chat
+---@param opts? { drop_granted_context?: boolean } Leave out the tools and rules the source was granted
 ---@return CodeCompanion.Chat.Messages
-local function build_messages(source)
+local function build_messages(source, opts)
+  opts = opts or {}
+
   local messages = vim.deepcopy(source.messages or {})
+  if opts.drop_granted_context then
+    messages = vim.tbl_filter(function(message)
+      return not GRANTED_CONTEXT_TAGS[message._meta and message._meta.tag]
+    end, messages)
+  end
+
   table.insert(messages, {
     content = "",
     role = config.constants.USER_ROLE,
@@ -84,17 +102,21 @@ function SlashCommand:output(name)
   local chat_args = {
     adapter = source.adapter,
     last_role = config.constants.USER_ROLE,
-    messages = build_messages(source),
+    messages = build_messages(source, { drop_granted_context = context_mode == "default" }),
     settings = source.settings and vim.deepcopy(source.settings) or nil,
     stop_context_insertion = true,
     title = title,
   }
 
-  -- The fork takes its context from the source, so loading the defaults here would render a second block
   if context_mode == "inherit" then
+    -- The fork takes its context from the source, so loading the defaults here would render a second block
     chat_args.mcp_servers = "none"
     chat_args.skills = "none"
     chat_args.tools = "none"
+  else
+    -- The chat loads tools and skills itself, but rules only reach it through a callback
+    local rules = require("codecompanion.interactions.shared.rules.helpers")
+    chat_args.callbacks = rules.add_callbacks(chat_args)
   end
 
   local Chat = require("codecompanion.interactions.chat")

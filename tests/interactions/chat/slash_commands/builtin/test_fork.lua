@@ -97,6 +97,18 @@ local function forked_messages_for(id)
   ))
 end
 
+---The user and LLM turns the fork sends, leaving out anything linked to context
+---@return string[]
+local function forked_conversation()
+  return child.lua_get([[
+    vim.tbl_map(function(message)
+      return message.content
+    end, vim.tbl_filter(function(message)
+      return message.context == nil and (message.role == "user" or message.role == "llm")
+    end, _G.forked.messages))
+  ]])
+end
+
 T["Fork"] = new_set()
 
 T["Fork"]["inherits the source's context when no mode is set"] = function()
@@ -160,6 +172,63 @@ T["Fork"]["revokes an inherited group when its row is deleted"] = function()
   h.eq({}, child.lua_get([[vim.tbl_keys(_G.forked.tool_registry.schemas)]]))
   h.eq({}, child.lua_get([[vim.tbl_keys(_G.forked.tool_registry.in_use)]]))
   h.eq(0, forked_messages_for("<group>tool_group</group>"))
+end
+
+T["Fork"]["renders the configured default tools and rules in default mode"] = function()
+  setup_source(with_default_tools({ "tool_group" }))
+  child.lua([[_G.chat.tool_registry:add("weather")]])
+
+  fork_source({ context = "default" })
+
+  h.eq({
+    "> Context:",
+    "> - <group>tool_group</group>",
+    "> - <rules>tests/stubs/rules/.rules</rules>",
+    "> - <rules>tests/stubs/rules/CLAUDE.md</rules>",
+  }, forked_context_block())
+end
+
+T["Fork"]["drops the context the source was granted from the history"] = function()
+  setup_source(with_default_tools({ "tool_group" }))
+  child.lua([[
+    _G.chat:add_message(
+      { role = "user", content = "Sharing `AGENTS.md`" },
+      { visible = false, _meta = { tag = "rules" }, context = { id = "<rules>AGENTS.md</rules>" } }
+    )
+  ]])
+
+  fork_source({ context = "default" })
+
+  h.eq(0, forked_messages_for("<rules>AGENTS.md</rules>"))
+  h.eq(1, forked_messages_for("<group>tool_group</group>"))
+end
+
+T["Fork"]["keeps the conversation and slash command output in default mode"] = function()
+  setup_source(with_default_tools({ "tool_group" }))
+  child.lua([[
+    _G.chat:add_message(
+      { role = "user", content = "The file says hello" },
+      { visible = false, _meta = { tag = "file" }, context = { id = "<file>lua/init.lua</file>" } }
+    )
+    table.insert(_G.chat.messages, { role = "llm", content = "Understood" })
+  ]])
+
+  fork_source({ context = "default" })
+
+  h.eq(1, forked_messages_for("<file>lua/init.lua</file>"))
+  h.eq({ "Hello there", "Understood" }, forked_conversation())
+end
+
+T["Fork"]["DOES NOT fall back to the source's context when no defaults are configured"] = function()
+  setup_source()
+  child.lua([[_G.chat.context:add({ source = "test", name = "test", id = "testing" })]])
+
+  fork_source({ context = "default" })
+
+  h.eq({
+    "<rules>tests/stubs/rules/.rules</rules>",
+    "<rules>tests/stubs/rules/CLAUDE.md</rules>",
+  }, forked_context_ids())
 end
 
 return T
