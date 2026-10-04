@@ -250,6 +250,8 @@ function UI:show_in_win(opts)
 
   api.nvim_win_set_buf(opts.winnr, self.chat_bufnr)
   self.winnr = opts.winnr
+  -- `open` leaves the cursor in the window it creates, and a reused window may not be the current one
+  api.nvim_set_current_win(self.winnr)
   -- Filetype is set in shared_ui.open; set it here too when skipping that path
   api.nvim_set_option_value("filetype", "codecompanion", { buf = self.chat_bufnr })
 

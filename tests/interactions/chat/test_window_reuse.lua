@@ -145,6 +145,25 @@ T["Chat"]["reuses window when creating a chat"] = function()
   h.eq(result.height_before, result.height_after)
 end
 
+T["Chat"]["focuses the reused window when creating a chat from another window"] = function()
+  local result = child.lua([[
+    vim.cmd("CodeCompanionChat")
+    local chat1 = require("codecompanion").last_chat()
+    local code_winnr = vim.fn.win_getid(vim.fn.winnr("#"))
+    vim.api.nvim_set_current_win(code_winnr)
+
+    vim.cmd("CodeCompanionChat")
+    local chat2 = require("codecompanion").last_chat()
+
+    return {
+      reused = chat2.ui.winnr == chat1.ui.winnr,
+      focused = vim.api.nvim_get_current_win() == chat2.ui.winnr,
+    }
+  ]])
+
+  h.eq({ reused = true, focused = true }, result)
+end
+
 T["Chat"]["sets filetype when shown in an existing window"] = function()
   local result = child.lua([[
     local chat = require("codecompanion").chat({ hidden = true })
