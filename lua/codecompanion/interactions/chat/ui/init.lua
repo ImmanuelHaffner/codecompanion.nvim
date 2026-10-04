@@ -194,6 +194,15 @@ function UI:_setup_after_open(opts)
   return self
 end
 
+---@param window table The resolved window configuration
+---@return string
+function UI:_get_title(window)
+  if self.title then
+    return string.format(" %s ", self.title)
+  end
+  return window.title or " CodeCompanion "
+end
+
 ---Open/create the chat window
 ---@param opts? { toggled?: boolean, window_opts?: table }
 ---@return CodeCompanion.Chat.UI|nil
@@ -221,13 +230,8 @@ function UI:open(opts)
     window = vim.deepcopy(config.display.chat.window)
   end
 
-  local title = window.title or " CodeCompanion "
-  if self.title then
-    title = string.format(" %s ", self.title)
-  end
-
   self.winnr = shared_ui.open(self.chat_bufnr, window, {
-    title = title,
+    title = self:_get_title(window),
     filetype = "codecompanion",
   })
 
@@ -262,6 +266,11 @@ function UI:show_in_win(opts)
     window = config.display.chat.window
   end
   ui_utils.apply_win_options(self.winnr, window.opts)
+
+  -- A float's border title belongs to the window, so it still names the chat shown there before
+  if api.nvim_win_get_config(self.winnr).title then
+    api.nvim_win_set_config(self.winnr, { title = self:_get_title(window) })
+  end
 
   log:trace("Chat opened in existing window with ID %d", self.chat_id)
   return self:_setup_after_open(opts)

@@ -256,4 +256,26 @@ T["Chat"]["clears source-only window opts when reusing"] = function()
   h.eq(true, result.wrap)
 end
 
+T["Chat"]["retitles a float when shown in it"] = function()
+  local result = child.lua([[
+    local chat = require("codecompanion").chat({ hidden = true })
+    chat:set_title("Beta")
+    local winnr = vim.api.nvim_open_win(vim.api.nvim_create_buf(false, true), true, {
+      relative = "editor",
+      row = 1,
+      col = 1,
+      width = 40,
+      height = 10,
+      border = "single",
+      title = " Alpha ",
+    })
+
+    chat.ui:show_in_win({ winnr = winnr })
+
+    return vim.api.nvim_win_get_config(winnr).title
+  ]])
+
+  h.eq({ { " Beta " } }, result)
+end
+
 return T
