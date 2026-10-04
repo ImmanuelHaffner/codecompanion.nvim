@@ -710,13 +710,70 @@ M.goto_file_under_cursor = {
   end,
 }
 
+---@return boolean
+local function is_btw_submit_confirmed()
+  api.nvim_echo({ { "Submit btw? <CR> to confirm, <Esc> to keep editing", "Question" } }, false, {})
+  local key = vim.fn.getcharstr()
+  api.nvim_echo({ { "" } }, false, {})
+  return key == "\r"
+end
+
+---Open a float to write the btw message, prefilled with any message already queued
+---@param chat CodeCompanion.Chat
+---@return nil
+local function open_btw_editor(chat)
+  -- Take the message out of the queue so the LLM can't be sent it mid-edit
+  local original = chat._btw
+  chat._btw = nil
+
+  local lines = original and vim.split(original, "\n", { plain = true }) or {}
+  local bufnr, winnr = ui_utils.create_float(lines, {
+    ft = "markdown",
+    height = 0.3,
+    ignore_keymaps = true,
+    title = "btw",
+    width = 0.5,
+  })
+  vim.bo[bufnr].bufhidden = "wipe"
+
+  local is_submitted = false
+  api.nvim_create_autocmd("BufWipeout", {
+    buffer = bufnr,
+    once = true,
+    callback = function()
+      if not is_submitted then
+        chat:btw(original)
+      end
+    end,
+  })
+
+  local function close()
+    vim.cmd("stopinsert")
+    pcall(api.nvim_win_close, winnr, true)
+  end
+
+  local function confirm_submit()
+    if not is_btw_submit_confirmed() then
+      return
+    end
+
+    is_submitted = true
+    local content = vim.trim(table.concat(api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n"))
+    close()
+    chat:btw(content)
+  end
+
+  vim.keymap.set("n", "q", confirm_submit, { buffer = bufnr, nowait = true, desc = "Submit the btw message" })
+  vim.keymap.set({ "n", "i" }, "<C-c>", close, { buffer = bufnr, desc = "Cancel the btw message" })
+
+  if not original then
+    vim.cmd("startinsert")
+  end
+end
+
 M.btw = {
   callback = function(chat)
-    vim.ui.input({ prompt = "btw ..." }, function(input)
-      if input and input ~= "" then
-        chat:btw(input)
-      end
-    end)
+    open_btw_editor(chat)
   end,
 
   ---@param chat CodeCompanion.Chat

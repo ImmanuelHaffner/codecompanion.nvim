@@ -350,4 +350,53 @@ T["Keymaps"]["change_effort"]["callback does not open the picker when effort is 
   h.eq(result, false)
 end
 
+T["Keymaps"]["btw"] = new_set({
+  hooks = {
+    pre_case = function()
+      child.lua([[
+        _G.chat = h.setup_chat_buffer()
+        chat._is_turn_active = true
+        chat._btw = "first"
+        require("codecompanion.interactions.chat.keymaps").btw.callback(chat)
+      ]])
+    end,
+  },
+})
+
+T["Keymaps"]["btw"]["submits the edited message after confirming"] = function()
+  h.eq({ "first" }, child.api.nvim_buf_get_lines(0, 0, -1, false))
+
+  child.type_keys("A", " and second", "<Esc>", "q", "<CR>")
+
+  h.eq("first and second", child.lua_get([[chat._btw]]))
+  h.eq("codecompanion", child.bo.filetype)
+end
+
+T["Keymaps"]["btw"]["keeps editing when the confirmation is declined"] = function()
+  child.type_keys("A", " and second", "<Esc>", "q", "<Esc>")
+
+  h.eq("markdown", child.bo.filetype)
+  h.eq({ "first and second" }, child.api.nvim_buf_get_lines(0, 0, -1, false))
+end
+
+T["Keymaps"]["btw"]["takes the message out of the queue while editing"] = function()
+  h.eq(vim.NIL, child.lua_get([[chat._btw]]))
+end
+
+T["Keymaps"]["btw"]["adds the original message to the prompt if the LLM finishes mid-edit"] = function()
+  child.lua([[chat._is_turn_active = false]])
+  child.type_keys("<C-c>")
+
+  local lines = child.api.nvim_buf_get_lines(0, 0, -1, false)
+  h.eq(vim.NIL, child.lua_get([[chat._btw]]))
+  h.eq("first", lines[#lines])
+end
+
+T["Keymaps"]["btw"]["<C-c> puts the original message back in the queue"] = function()
+  child.type_keys("A", " and second", "<C-c>")
+
+  h.eq("codecompanion", child.bo.filetype)
+  h.eq("first", child.lua_get([[chat._btw]]))
+end
+
 return T
