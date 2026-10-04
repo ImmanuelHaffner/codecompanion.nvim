@@ -894,21 +894,41 @@ T["Chat"]["on_tool_output callback receives correct args"] = function()
   h.eq(result.message_content, "Modified: LLM output")
 end
 
-T["Chat"]["btw"] = new_set()
-
-T["Chat"]["btw"]["stores the message on the chat object"] = function()
-  child.lua([[
-    chat:btw("look in src/utils instead")
-  ]])
-
-  local queued = child.lua_get([[chat._btw]])
-  h.eq("look in src/utils instead", queued)
+local function start_turn()
+  child.lua([[chat._is_turn_active = true]])
 end
 
-T["Chat"]["btw"]["ignores empty input"] = function()
+T["Chat"]["btw"] = new_set({ hooks = { pre_case = start_turn } })
+
+T["Chat"]["btw"]["is queued while the LLM is working"] = function()
+  local result = child.lua([[
+    local queued
+    h.send_to_llm(chat, "Working on it", function()
+      chat:btw("look in src/utils instead")
+      queued = chat._btw
+    end)
+    return queued
+  ]])
+
+  h.eq("look in src/utils instead", result)
+end
+
+T["Chat"]["btw"]["is added to the prompt once the LLM has finished"] = function()
+  local result = child.lua([[
+    h.send_to_llm(chat, "All done")
+    chat:btw("look in src/utils instead")
+    local lines = vim.api.nvim_buf_get_lines(chat.bufnr, 0, -1, false)
+    return { queued = chat._btw, last_line = lines[#lines] }
+  ]])
+
+  h.eq(nil, result.queued)
+  h.eq("look in src/utils instead", result.last_line)
+end
+
+T["Chat"]["btw"]["clears the queued message when given empty input"] = function()
   child.lua([[
+    chat:btw("first")
     chat:btw("")
-    chat:btw(nil)
   ]])
 
   local queued = child.lua_get([[chat._btw]])
@@ -925,7 +945,7 @@ T["Chat"]["btw"]["last message wins when queued multiple times"] = function()
   h.eq("second", queued)
 end
 
-T["Chat"]["inject"] = new_set()
+T["Chat"]["inject"] = new_set({ hooks = { pre_case = start_turn } })
 
 T["Chat"]["inject"]["injects the queued message into the message stack on auto-submit"] = function()
   child.lua([[

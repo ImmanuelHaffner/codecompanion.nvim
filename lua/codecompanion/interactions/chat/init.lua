@@ -38,6 +38,7 @@
 ---@field _acp_name_map_cache? table|false Memoised value -> display-name map for ACP select options; false means "computed, no entries"
 ---@field _btw? string The user's "by the way" message which is queued for sending to an LLM
 ---@field _compacting? boolean Whether a compaction request is currently in flight
+---@field _is_turn_active? boolean Whether the LLM is still working on the user's last prompt
 ---@field _last_role string The last role that was rendered in the chat buffer
 ---@field _status table Bookkeeping for the current status virtual text (extmark id + status flag)
 ---@field _tool_monitors? table A table of tool monitors that are currently running in the chat buffer
@@ -1199,15 +1200,20 @@ function Chat:replace_user_inputs(message)
   end
 end
 
----Send a "btw" message to the LLM during the agentic loop
----@param content string
+---Queue a "btw" message for the LLM, or add it to the prompt if the turn has finished
+---@param content? string
 ---@return nil
 function Chat:btw(content)
-  if not content or content == "" then
+  local has_content = content ~= nil and content ~= ""
+
+  if not self._is_turn_active then
+    if has_content then
+      self:add_buf_message({ role = config.constants.USER_ROLE, content = content })
+    end
     return
   end
 
-  self._btw = content
+  self._btw = has_content and content or nil
   log:debug("BTW message queued: %s", content)
 end
 
@@ -1455,6 +1461,7 @@ function Chat:submit(opts)
     self.header_line = api.nvim_buf_line_count(self.bufnr) + 2 -- this accounts for the LLM header
 
     -- Allow users to send a btw message during an active request
+    self._is_turn_active = true
     require("codecompanion.interactions.chat.keymaps").btw.set(self)
   end
 
@@ -1994,6 +2001,7 @@ function Chat:ready_for_input(opts)
     self.ui:add_line_break()
     self.ui:add_line_break()
   else
+    self._is_turn_active = false
     require("codecompanion.interactions.chat.keymaps").btw.remove(self)
   end
 
@@ -2011,6 +2019,7 @@ end
 ---Restore the chat buffer to an editable state (used when a submission is prevented)
 ---@return nil
 function Chat:restore()
+  self._is_turn_active = false
   require("codecompanion.interactions.chat.keymaps").btw.remove(self)
   self:reset()
   utils.fire("ChatRestored", { bufnr = self.bufnr, id = self.id })
