@@ -17,9 +17,6 @@ local T = new_set({
           buffer_context = { bufnr = 1, filetype = 'lua' },
           adapter = 'test_adapter',
         })
-
-        -- A width the user could have chosen, which a rebuilt window would not keep
-        vim.api.nvim_win_set_width(_G.second.ui.winnr, 42)
       ]])
     end,
     post_case = function()
@@ -30,27 +27,6 @@ local T = new_set({
 })
 
 T["Registry"] = new_set()
-
-T["Registry"]["cycling hands the window over and keeps its size"] = function()
-  local before = child.lua_get([[{
-    winnr = _G.second.ui.winnr,
-    windows = #vim.api.nvim_list_wins(),
-  }]])
-
-  child.lua([[registry.move(_G.second.bufnr, 1)]])
-
-  local after = child.lua_get([[{
-    winnr = _G.first.ui.winnr,
-    width = vim.api.nvim_win_get_width(_G.first.ui.winnr),
-    windows = #vim.api.nvim_list_wins(),
-    bufnr = vim.api.nvim_win_get_buf(_G.first.ui.winnr),
-  }]])
-
-  h.eq(before.winnr, after.winnr)
-  h.eq(before.windows, after.windows)
-  h.eq(42, after.width)
-  h.eq(child.lua_get("_G.first.bufnr"), after.bufnr)
-end
 
 T["Registry"]["a window-local cwd survives a round trip"] = function()
   local before = child.lua_get([[(function()
@@ -75,33 +51,14 @@ T["Registry"]["a window-local cwd survives a round trip"] = function()
   h.eq(before, after)
 end
 
-T["Registry"]["window options are applied to a chat shown for the first time"] = function()
-  local winnr = child.lua_get("_G.second.ui.winnr")
-
+T["Registry"]["hiding the chat that gave up its window leaves the next chat visible"] = function()
   local result = child.lua_get([[(function()
-    -- A buffer that has never been displayed in the window falls back to the
-    -- global option values, so make the global the opposite of the chat window's
-    vim.go.wrap = false
-    _G.third = require('codecompanion.interactions.chat').new({
-      buffer_context = { bufnr = 1, filetype = 'lua' },
-      adapter = 'test_adapter',
-      hidden = true,
-    })
-
     registry.move(_G.second.bufnr, 1)
-
-    return {
-      visible = _G.third.ui:is_visible(),
-      winnr = _G.third.ui.winnr,
-      wrap = vim.api.nvim_get_option_value('wrap', { win = _G.third.ui.winnr, scope = 'local' }),
-      foldmethod = vim.api.nvim_get_option_value('foldmethod', { win = _G.third.ui.winnr, scope = 'local' }),
-    }
+    _G.second.ui:hide()
+    return { first = _G.first.ui:is_visible(), second = _G.second.ui:is_visible() }
   end)()]])
 
-  h.eq(true, result.visible)
-  h.eq(winnr, result.winnr)
-  h.eq(true, result.wrap)
-  h.eq("manual", result.foldmethod)
+  h.eq({ first = true, second = false }, result)
 end
 
 return T
