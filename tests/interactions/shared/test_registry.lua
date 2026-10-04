@@ -52,14 +52,6 @@ T["Registry"]["cycling hands the window over and keeps its size"] = function()
   h.eq(child.lua_get("_G.first.bufnr"), after.bufnr)
 end
 
-T["Registry"]["the interaction that gave up its window stops claiming it"] = function()
-  child.lua([[registry.move(_G.second.bufnr, 1)]])
-
-  h.eq(vim.NIL, child.lua_get("_G.second.ui.winnr"))
-  h.eq(false, child.lua_get("_G.second.ui:is_visible()"))
-  h.eq(true, child.lua_get("_G.first.ui:is_visible()"))
-end
-
 T["Registry"]["a window-local cwd survives a round trip"] = function()
   local before = child.lua_get([[(function()
     local dir = vim.fn.tempname()
@@ -110,25 +102,6 @@ T["Registry"]["window options are applied to a chat shown for the first time"] =
   h.eq(winnr, result.winnr)
   h.eq(true, result.wrap)
   h.eq("manual", result.foldmethod)
-end
-
-T["Registry"]["falls back to a new window when the layouts differ"] = function()
-  local result = child.lua_get([[(function()
-    _G.first.ui.window_opts = { layout = 'float' }
-    local handed_over = _G.second.ui.winnr
-
-    registry.move(_G.second.bufnr, 1)
-
-    return {
-      relative = vim.api.nvim_win_get_config(_G.first.ui.winnr).relative,
-      reused = _G.first.ui.winnr == handed_over,
-      second_visible = _G.second.ui:is_visible(),
-    }
-  end)()]])
-
-  h.eq("editor", result.relative)
-  h.eq(false, result.reused)
-  h.eq(false, result.second_visible)
 end
 
 return T

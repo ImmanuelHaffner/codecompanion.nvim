@@ -42,7 +42,6 @@ deps/plenary.nvim:
 deps/nvim-treesitter:
 	@mkdir -p deps
 	git clone --filter=blob:none https://github.com/nvim-treesitter/nvim-treesitter.git $@
-	cd $@ && git checkout 7caec27
 
 deps/mini.nvim:
 	@mkdir -p deps
@@ -50,4 +49,4 @@ deps/mini.nvim:
 
 deps/panvimdoc:
 	@mkdir -p deps
-	git clone --filter=blob:none https://github.com/kdheepak/panvimdoc $@
+	git clone --filter=blob:none https://github.com/kdheepak/panvimdoc --branch v4.0.1 $@

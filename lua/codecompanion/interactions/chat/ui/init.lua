@@ -9,6 +9,7 @@ local markdown = require("codecompanion.utils.markdown")
 local schema = require("codecompanion.schema")
 local shared_ui = require("codecompanion.interactions.shared.ui")
 local tags = require("codecompanion.interactions.shared.tags")
+local ui_utils = require("codecompanion.utils.ui")
 local utils = require("codecompanion.utils")
 local yaml = require("codecompanion.utils.yaml")
 
@@ -42,7 +43,7 @@ end
 ---@field folds CodeCompanion.Chat.UI.Folds The folds for the chat
 ---@field header_ns number The namespace for the header
 ---@field roles table The roles in the chat
----@field winnr number|nil The window number of the chat
+---@field winnr number The window number of the chat
 ---@field settings table The settings for the chat
 ---@field title string|nil The title of the chat window
 ---@field window_opts? table The window configuration options for the chat buffer
@@ -162,37 +163,12 @@ function UI.new(args)
   return self
 end
 
----Resolve the window configuration for this chat, applying any per-chat overrides
----@return table
-function UI:resolve_window()
-  if self.window_opts then
-    return vim.tbl_deep_extend("force", {}, config.display.chat.window, self.window_opts)
-  end
-  return vim.deepcopy(config.display.chat.window)
-end
-
----Resolve the title to display on the chat window
----@param window table The resolved window configuration
----@return string
-function UI:window_title(window)
-  if self.title then
-    return string.format(" %s ", self.title)
-  end
-  return window.title or " CodeCompanion "
-end
-
----Open/create the chat window
----@param opts? table
----@return CodeCompanion.Chat.UI|nil
-function UI:open(opts)
+---@param opts? { toggled?: boolean }
+---@return CodeCompanion.Chat.UI
+function UI:_setup_after_open(opts)
   opts = opts or {}
+  vim.bo[self.chat_bufnr].textwidth = 0
 
-  if self:is_visible() then
-    if config.display.chat.window.layout == "tab" and self:is_visible_non_curtab() then
-      api.nvim_set_current_tabpage(api.nvim_win_get_tabpage(self.winnr))
-    end
-    return
-  end
   if config.display.chat.start_in_insert_mode then
     -- Delay entering insert mode until after Telescope picker fully closes,
     -- since Telescope resets to normal mode on close.
@@ -201,25 +177,7 @@ function UI:open(opts)
     end)
   end
 
-  if opts.window_opts then
-    if opts.window_opts.default then
-      self.window_opts = nil
-    else
-      self.window_opts = opts.window_opts
-    end
-  end
-  local window = self:resolve_window()
-  local title = self:window_title(window)
-
-  self.winnr = shared_ui.open(self.chat_bufnr, window, {
-    title = title,
-    filetype = "codecompanion",
-  })
-
-  vim.bo[self.chat_bufnr].textwidth = 0
-
   if not opts.toggled then
-    -- Put the cursor back in the original position
     if self.cursor.moved_by_user and self.cursor.pos then
       vim.schedule(function()
         if self:is_visible() then
@@ -232,86 +190,94 @@ function UI:open(opts)
   end
 
   self.folds:setup(self.winnr)
-
-  log:trace("Chat opened with ID %d", self.chat_id)
   utils.fire("ChatOpened", { bufnr = self.chat_bufnr, id = self.chat_id })
-
   return self
 end
 
----Display the chat in a window that already exists, leaving that window's
----geometry and position exactly as the user left them
----@param winnr number The window to display the chat in
+---Open/create the chat window
+---@param opts? { toggled?: boolean, window_opts?: table }
 ---@return CodeCompanion.Chat.UI|nil
-function UI:show(winnr)
-  if not winnr or not api.nvim_win_is_valid(winnr) then
+function UI:open(opts)
+  opts = opts or {}
+
+  if self:is_visible() then
+    if config.display.chat.window.layout == "tab" and self:is_visible_non_curtab() then
+      api.nvim_set_current_tabpage(api.nvim_win_get_tabpage(self.winnr))
+    end
     return
   end
-  if self:is_visible() then
-    return self
+
+  if opts.window_opts then
+    if opts.window_opts.default then
+      self.window_opts = nil
+    else
+      self.window_opts = opts.window_opts
+    end
   end
-
-  local window = self:resolve_window()
-
-  api.nvim_win_set_buf(winnr, self.chat_bufnr)
-  self.winnr = winnr
-
-  -- `open` leaves the cursor in the window it created, so match that: it keeps
-  -- `startinsert` below, and anything an autocmd does, pointed at this chat
-  if api.nvim_get_current_win() ~= winnr then
-    api.nvim_set_current_win(winnr)
-  end
-
-  if config.display.chat.start_in_insert_mode then
-    vim.schedule(function()
-      vim.cmd("startinsert")
-    end)
-  end
-
-  -- A window carries the options of whichever buffer it displayed before, and a
-  -- buffer that has never been shown in it falls back to the global values, so
-  -- the window options have to be applied again
-  if window.opts and not vim.tbl_isempty(window.opts) then
-    require("codecompanion.utils.ui").set_win_options(winnr, window.opts)
-  end
-  vim.bo[self.chat_bufnr].textwidth = 0
-
-  -- A float's border title belongs to the window, so it still names the chat we
-  -- are replacing
-  if window.layout == "float" then
-    local win_config = api.nvim_win_get_config(winnr)
-    win_config.title = self:window_title(window)
-    win_config.title_pos = window.title_pos or "center"
-    pcall(api.nvim_win_set_config, winnr, win_config)
-  end
-
-  if self.cursor.moved_by_user and self.cursor.pos then
-    pcall(api.nvim_win_set_cursor, winnr, self.cursor.pos)
+  local window
+  if self.window_opts then
+    window = vim.tbl_deep_extend("force", {}, config.display.chat.window, self.window_opts)
   else
-    self:follow()
+    window = vim.deepcopy(config.display.chat.window)
   end
 
-  self.folds:setup(winnr)
+  local title = window.title or " CodeCompanion "
+  if self.title then
+    title = string.format(" %s ", self.title)
+  end
 
-  log:trace("Chat shown with ID %d", self.chat_id)
-  utils.fire("ChatOpened", { bufnr = self.chat_bufnr, id = self.chat_id })
+  self.winnr = shared_ui.open(self.chat_bufnr, window, {
+    title = title,
+    filetype = "codecompanion",
+  })
 
-  return self
+  log:trace("Chat opened with ID %d", self.chat_id)
+  return self:_setup_after_open(opts)
+end
+
+---@param opts { winnr: number, toggled?: boolean, window_opts?: table }
+---@return CodeCompanion.Chat.UI
+function UI:show_in_win(opts)
+  opts = opts or {}
+
+  if opts.window_opts then
+    if opts.window_opts.default then
+      self.window_opts = nil
+    else
+      self.window_opts = opts.window_opts
+    end
+  end
+
+  api.nvim_win_set_buf(opts.winnr, self.chat_bufnr)
+  self.winnr = opts.winnr
+  -- Filetype is set in shared_ui.open; set it here too when skipping that path
+  api.nvim_set_option_value("filetype", "codecompanion", { buf = self.chat_bufnr })
+
+  local window
+  if self.window_opts then
+    window = vim.tbl_deep_extend("force", {}, config.display.chat.window, self.window_opts)
+  else
+    window = config.display.chat.window
+  end
+  ui_utils.apply_win_options(self.winnr, window.opts)
+
+  log:trace("Chat opened in existing window with ID %d", self.chat_id)
+  return self:_setup_after_open(opts)
 end
 
 ---Hide the chat buffer from view
----@param opts? { window_reused?: boolean } Set `window_reused` when another
----  interaction has taken over our window, so the window is left alone
+---@param opts? { keep_window?: boolean }
 ---@return nil
 function UI:hide(opts)
   opts = opts or {}
-
-  if opts.window_reused then
-    -- Someone else displays their buffer in our window now, so all that is left
-    -- to do is drop our claim on it
-    self.winnr = nil
-  else
-    shared_ui.hide(self.winnr, self.chat_bufnr, self:resolve_window().layout)
+  if not opts.keep_window then
+    local layout
+    if self.window_opts then
+      layout = vim.tbl_deep_extend("force", {}, config.display.chat.window, self.window_opts).layout
+    else
+      layout = config.display.chat.window.layout
+    end
+    shared_ui.hide(self.winnr, self.chat_bufnr, layout)
   end
 
   utils.fire("ChatHidden", { bufnr = self.chat_bufnr, id = self.chat_id })

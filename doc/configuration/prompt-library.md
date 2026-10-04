@@ -273,6 +273,7 @@ To see what your agent supports, open a chat with that adapter open the debug wi
 :::
 
 - `alias` _(string)_ - Allows the prompt to be triggered via `:CodeCompanion /{alias}`
+- `approval_mode` _(string)_ - Start the chat buffer in an [approval mode](/usage/chat-buffer/agents-tools#approval-modes). Can be `"ask"`, `"auto"` or `"yolo"`
 - `auto_submit` _(boolean)_ - Automatically submit the prompt to the LLM
 - `enabled` _(boolean)_ - Enable/disable the prompt without removing it from the library
 - `ignore_system_prompt` _(boolean)_ - Don't send the default system prompt with the request
@@ -742,7 +743,7 @@ tools:
 :::
 
 ::: tip Disabling all tools
-Setting `tools` to `none` will prevent any tools from being loaded in the chat, including any [default tools](/configuration/chat-buffer#default-tools):
+Setting `tools` to `none` will prevent any tools from being loaded in the chat, including any [default tools](/configuration/tools#default-tools):
 
 ::: code-group
 

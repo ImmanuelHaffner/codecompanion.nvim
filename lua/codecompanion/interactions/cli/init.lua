@@ -168,17 +168,16 @@ function CLI.create(args)
     name = agent_name,
     description = agent.description or "CLI agent",
     interaction = "cli",
-    open = function()
+    open = function(opts)
+      opts = opts or {}
+      if opts.winnr then
+        self.ui:show_in_win(opts)
+        return
+      end
       self.ui:open()
     end,
     hide = function(opts)
       self.ui:hide(opts)
-    end,
-    show = function(winnr)
-      self.ui:show(winnr)
-    end,
-    window = function()
-      return self.ui:resolve_window()
     end,
   })
 

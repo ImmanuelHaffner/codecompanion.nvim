@@ -3,14 +3,13 @@
 ---@field description string
 ---@field interaction string
 ---@field bufnr number
----@field open fun()
----@field hide fun(opts?: { window_reused?: boolean })
----@field show? fun(winnr: number) Display in a window that already exists
----@field window? fun(): table The resolved window configuration
-
-local api = vim.api
+---@field open fun(opts?: { winnr?: number })
+---@field hide fun(opts?: { keep_window?: boolean })
 
 local M = {}
+
+local api = vim.api
+local ui_utils = require("codecompanion.utils.ui")
 
 ---@type table<number, CodeCompanion.Registry.Entry>
 local entries = {}
@@ -61,44 +60,6 @@ function M.get(bufnr)
   return entries[bufnr]
 end
 
----Layouts whose window can be handed from one interaction to another. `tab` and
----`buffer` are excluded because hiding those means leaving a tabpage or returning
----to the alternate buffer, not closing a window
-local REUSABLE_LAYOUTS = { float = true, horizontal = true, vertical = true }
-
----Find the window in the current tabpage that displays a buffer, preferring the
----current window
----@param bufnr number
----@return number|nil
-local function curtab_win(bufnr)
-  local current = api.nvim_get_current_win()
-  if api.nvim_win_get_buf(current) == bufnr then
-    return current
-  end
-  for _, winnr in ipairs(api.nvim_tabpage_list_wins(0)) do
-    if api.nvim_win_get_buf(winnr) == bufnr then
-      return winnr
-    end
-  end
-end
-
----The window `current` occupies, if `next_entry` is able to take it over
----@param current CodeCompanion.Registry.Entry
----@param next_entry CodeCompanion.Registry.Entry
----@return number|nil
-local function window_to_hand_over(current, next_entry)
-  if not next_entry.show or not current.window or not next_entry.window then
-    return
-  end
-
-  local layout = current.window().layout
-  if not REUSABLE_LAYOUTS[layout] or layout ~= next_entry.window().layout then
-    return
-  end
-
-  return curtab_win(current.bufnr)
-end
-
 ---Navigate to the next or previous interaction
 ---@param current_bufnr number
 ---@param direction number 1 for next, -1 for previous
@@ -136,14 +97,10 @@ function M.move(current_bufnr, direction, opts)
   local current = sorted[idx]
   local next_entry = sorted[next_idx]
 
-  -- Hand the window over when both interactions live in one, rather than closing
-  -- it and building a new one: the replacement comes back at its configured size,
-  -- discarding whatever the user resized it to along with everything else the
-  -- window owned, such as a window-local cwd
-  local winnr = window_to_hand_over(current, next_entry)
-  if winnr then
-    current.hide({ window_reused = true })
-    next_entry.show(winnr)
+  local winnr = ui_utils.buf_get_win(current_bufnr)
+  if winnr and api.nvim_win_is_valid(winnr) then
+    current.hide({ keep_window = true })
+    next_entry.open({ winnr = winnr })
   else
     current.hide()
     next_entry.open()

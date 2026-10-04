@@ -335,14 +335,18 @@ end
 
 M.close = {
   callback = function(chat)
+    local winnr
+    if chat.ui:is_visible() and not chat.ui:is_visible_non_curtab() then
+      winnr = chat.ui.winnr
+    end
+    local window_opts = chat.ui.window_opts or { default = true }
+
     chat:close()
 
     local chats = require("codecompanion").buf_get_chat()
     if vim.tbl_count(chats) == 0 then
       return
     end
-
-    local window_opts = chat.ui.window_opts or { default = true }
 
     local target = chats[1]
 
@@ -357,7 +361,11 @@ M.close = {
       end
     end
 
-    target.chat.ui:open({ window_opts = window_opts })
+    require("codecompanion.interactions.chat").open({
+      ui = target.chat.ui,
+      winnr = winnr,
+      window_opts = window_opts,
+    })
   end,
 }
 
@@ -631,14 +639,29 @@ M.clear_approvals = {
 }
 
 M.yolo_mode = {
-  desc = "Toggle YOLO mode",
+  desc = "Choose how tool calls are approved",
   callback = function(chat)
     local approvals = require("codecompanion.interactions.chat.tools.approvals")
-    local status = approvals:toggle_yolo_mode(chat.bufnr)
-    if status then
-      return utils.notify("YOLO mode enabled!", vim.log.levels.INFO)
-    end
-    return utils.notify("YOLO mode disabled!", vim.log.levels.INFO)
+    local current = approvals:get_mode(chat.bufnr)
+    local modes = {
+      { mode = "ask", label = "Ask", description = "prompt before any tool that needs approval" },
+      { mode = "auto", label = "Auto", description = "run reads, edits and safe commands; judge or prompt the rest" },
+      { mode = "yolo", label = "YOLO", description = "run everything without asking" },
+    }
+
+    vim.ui.select(modes, {
+      prompt = "Approval mode for this chat",
+      format_item = function(item)
+        local marker = item.mode == current and "* " or "  "
+        return ("%s%s - %s"):format(marker, item.label, item.description)
+      end,
+    }, function(choice)
+      if not choice then
+        return
+      end
+      approvals:set_mode(chat.bufnr, { mode = choice.mode })
+      utils.notify(("Approval mode: %s"):format(choice.label), vim.log.levels.INFO)
+    end)
   end,
 }
 
