@@ -321,6 +321,25 @@ function Orchestrator:_label_completed()
   )
 end
 
+-- FORK(mcphub-exec): public accessor for the running tool's label, so extensions can decorate it.
+---The running tool's label, with its row resolved through the icon extmark, which tracks edits
+---@return { bufnr: number, row: number, text: string }|nil
+function Orchestrator:get_tool_label()
+  local label = self.tool_label
+  if not label or not label.icon_id then
+    return nil
+  end
+  -- The label is written through the chat, so it lives in the chat's buffer
+  local bufnr = self.tools.chat.bufnr
+  local ns = require("codecompanion.interactions.chat.ui.icons").ns()
+  local pos = vim.api.nvim_buf_get_extmark_by_id(bufnr, ns, label.icon_id, {})
+  if not pos[1] then
+    return nil
+  end
+  return { bufnr = bufnr, row = pos[1], text = label.text }
+end
+-- /FORK(mcphub-exec)
+
 ---When the tools coordinator is finished, finalize it via an autocmd
 ---@param self CodeCompanion.Tools.Orchestrator
 ---@return nil

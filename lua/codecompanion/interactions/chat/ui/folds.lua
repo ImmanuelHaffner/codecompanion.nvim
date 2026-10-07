@@ -85,6 +85,15 @@ function Folds.fold_text()
     return vim.fn.foldtext()
   end
 
+  -- FORK(mcphub-exec): a summary may render its own chunks, so extensions can show live state on the fold line.
+  if fold_data.chunks then
+    local ok, chunks = pcall(fold_data.chunks)
+    if ok and type(chunks) == "table" then
+      return chunks
+    end
+  end
+  -- /FORK(mcphub-exec)
+
   return Folds._format_fold_text(fold_data.content, fold_data.type)
 end
 

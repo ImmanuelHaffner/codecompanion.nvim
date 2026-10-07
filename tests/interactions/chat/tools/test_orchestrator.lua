@@ -296,4 +296,68 @@ T["protected tool prompts without judging, even for a safe command"] = function(
   h.eq('Run the "dangerous" tool?', child.lua_get("_G.prompted_with"))
 end
 
+T["get_tool_label"] = new_set()
+
+---Run a tool whose cmd records the label before and after two lines are inserted at the top of the buffer
+local function record_tool_labels()
+  child.lua([[
+    _G.labels = {}
+    local cfg = {
+      interactions = {
+        chat = {
+          tools = {
+            opts = { auto_submit_success = false, auto_submit_errors = false },
+            labelled = {
+              enabled = true,
+              callback = function()
+                return {
+                  name = "labelled",
+                  cmds = {
+                    function(self, args, opts)
+                      local orchestrator = self.chat.tool_orchestrator
+                      local before = orchestrator:get_tool_label()
+                      before.line = vim.api.nvim_buf_get_lines(before.bufnr, before.row, before.row + 1, false)[1]
+                      table.insert(_G.labels, before)
+                      vim.bo[before.bufnr].modifiable = true
+                      vim.api.nvim_buf_set_lines(before.bufnr, 0, 0, false, { "one", "two" })
+                      table.insert(_G.labels, orchestrator:get_tool_label())
+                      opts.output_cb({ status = "success", data = "ran" })
+                    end,
+                  },
+                  schema = {
+                    type = "function",
+                    ["function"] = {
+                      name = "labelled",
+                      description = "A tool that records its label",
+                      parameters = { type = "object", properties = {} },
+                    },
+                  },
+                }
+              end,
+            },
+          },
+        },
+      },
+    }
+    local chat, tools = h.setup_chat_buffer(cfg)
+    _G.chat, _G.tools = chat, tools
+    _G.tools:execute(_G.chat, { { ["function"] = { name = "labelled", arguments = "{}" } } })
+    vim.wait(250)
+  ]])
+  return child.lua_get("_G.labels")
+end
+
+T["get_tool_label"]["points at the running tool's label"] = function()
+  local labels = record_tool_labels()
+  h.eq(2, #labels)
+  h.eq(child.lua_get("_G.chat.bufnr"), labels[1].bufnr)
+  h.expect_contains("labelled", labels[1].line)
+  h.eq("labelled", labels[1].text)
+end
+
+T["get_tool_label"]["follows lines inserted above the label"] = function()
+  local labels = record_tool_labels()
+  h.eq(labels[1].row + 2, labels[2].row)
+end
+
 return T
