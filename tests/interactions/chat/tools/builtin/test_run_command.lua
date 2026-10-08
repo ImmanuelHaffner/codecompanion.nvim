@@ -33,7 +33,18 @@ T["run_command tool"] = function()
       },
     }
     tools:execute(chat, tool)
-    vim.wait(200)
+    -- FORK(test-wait-for-output): the command runs asynchronously, so wait for the turn to end, when the
+    -- user's header follows the tool label, rather than for a fixed time
+    vim.wait(5000, function()
+      local headers = 0
+      for _, line in ipairs(vim.api.nvim_buf_get_lines(chat.bufnr, 0, -1, false)) do
+        if line == "## foo" then
+          headers = headers + 1
+        end
+      end
+      return headers > 1
+    end, 10)
+    -- /FORK(test-wait-for-output)
   ]])
 
   h.expect_screenshot(child.get_screenshot(), "tests/screenshots/interactions/chat/tools/builtin/run_command_tool")
@@ -162,7 +173,11 @@ T["Windows"]["run_command handles Windows pipe command with empty string argumen
     }
 
     _G.tools:execute(_G.chat, calls)
-    vim.wait(1000) -- Give more time for the real command to execute
+    -- FORK(test-wait-for-output): wait for the real command's result rather than for a fixed time
+    vim.wait(10000, function()
+      return #command_results > 0
+    end, 25)
+    -- /FORK(test-wait-for-output)
 
     -- Restore original vim.system
     vim.system = original_system

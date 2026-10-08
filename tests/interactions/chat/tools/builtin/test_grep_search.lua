@@ -145,7 +145,11 @@ T["can find basic text matches"] = function()
       },
     }
     tools:execute(chat, tool)
-    vim.wait(200)
+    -- FORK(test-wait-for-output): rg runs asynchronously, and a cold start can outlast a fixed wait
+    vim.wait(5000, function()
+      return (chat.messages[#chat.messages].content or ""):find("<grepSearchTool>", 1, true) ~= nil
+    end, 10)
+    -- /FORK(test-wait-for-output)
   ]])
 
   local output = child.lua_get("chat.messages[#chat.messages].content")
@@ -168,7 +172,11 @@ T["can search for patterns starting with hyphen"] = function()
       },
     }
     tools:execute(chat, tool)
-    vim.wait(200)
+    -- FORK(test-wait-for-output): rg runs asynchronously, and a cold start can outlast a fixed wait
+    vim.wait(5000, function()
+      return (chat.messages[#chat.messages].content or ""):find("<grepSearchTool>", 1, true) ~= nil
+    end, 10)
+    -- /FORK(test-wait-for-output)
   ]])
 
   local output = child.lua_get("chat.messages[#chat.messages].content")
