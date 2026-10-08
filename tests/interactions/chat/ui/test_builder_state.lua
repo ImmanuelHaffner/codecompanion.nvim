@@ -110,6 +110,45 @@ T["Builder state"]["tool fold is placed on the content line when the tool messag
   h.eq(res.fold.type, "tool")
 end
 
+T["Builder state"]["a tool fold ends on the output's last non-blank line"] = function()
+  -- The fold is created deferred. Before then, the next tool's write trims the
+  -- output's trailing blank and puts its separator into that row, so a fold
+  -- ending on the blank would swallow the separator above the next label.
+  local res = child.lua([[
+    require("codecompanion.config").interactions.chat.tools.opts.folds.enabled = true
+    local ui = require("codecompanion.utils.ui")
+    local bufnr = _G.chat.bufnr
+    if not ui.buf_get_win(bufnr) then
+      vim.api.nvim_win_set_buf(0, bufnr)
+    end
+
+    _G.chat:add_buf_message({ role = "llm", content = "out 1\nout 2\n" }, { type = _G.MT.TOOL_MESSAGE })
+    _G.chat:add_buf_message(
+      { role = "llm", content = "next tool" },
+      { type = _G.MT.TOOL_MESSAGE, status = "in_progress" }
+    )
+    vim.wait(200, function() return false end)
+
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, true)
+    local out1, label
+    for i, l in ipairs(lines) do
+      if l == "out 1" then out1 = i end
+      if l:find("next tool", 1, true) then label = i end
+    end
+    return vim.api.nvim_win_call(ui.buf_get_win(bufnr), function()
+      return {
+        levels = { vim.fn.foldlevel(out1), vim.fn.foldlevel(out1 + 1) },
+        separator = lines[label - 1],
+        separator_level = vim.fn.foldlevel(label - 1),
+      }
+    end)
+  ]])
+
+  h.eq(res.levels, { 1, 1 })
+  h.eq(res.separator, "")
+  h.eq(res.separator_level, 0)
+end
+
 T["Builder"] = new_set()
 
 T["Builder"]["a status write is collapsed onto a single line"] = function()

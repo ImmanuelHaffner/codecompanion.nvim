@@ -177,13 +177,20 @@ function Builder:add_message(data, opts)
     write.content_start = #lines
     vim.list_extend(lines, content_lines)
 
-    if block == BLOCK.TOOL and #content_lines > 0 and self:_tool_folds_enabled(opts) then
+    -- FORK(tool-fold-blanks): end the fold on the last non-blank line. The fold is created deferred, and by then the
+    -- next block's write has trimmed the trailing blanks and put its separator in their row, inside the fold.
+    local folded = #content_lines
+    while folded > 0 and content_lines[folded] == BLANK do
+      folded = folded - 1
+    end
+    if block == BLOCK.TOOL and folded > 0 and self:_tool_folds_enabled(opts) then
       write.fold_info = {
         start_offset = write.content_start,
-        end_offset = write.content_start + #content_lines - 1,
+        end_offset = write.content_start + folded - 1,
         first_line = content_lines[1] or "",
       }
     end
+    -- /FORK(tool-fold-blanks)
 
     self.state.block_type = block
   end
