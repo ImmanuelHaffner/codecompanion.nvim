@@ -2082,13 +2082,13 @@ T["cwd"] = new_set({
         end
 
         -- A memory call through the orchestrator, returning what the LLM gets back
-        _G.view = function(path)
+        _G.call = function(args)
           local n = #chat.messages
           tools:execute(chat, {
             {
               id = "cwd_call_" .. n,
               type = "function",
-              ["function"] = { name = "memory", arguments = vim.json.encode({ command = "view", path = path }) },
+              ["function"] = { name = "memory", arguments = vim.json.encode(args) },
             },
           })
           vim.wait(5000, function()
@@ -2096,6 +2096,21 @@ T["cwd"] = new_set({
           end, 10)
           return chat.messages[#chat.messages].content
         end
+        _G.view = function(path)
+          return _G.call({ command = "view", path = path })
+        end
+
+        -- A memory command run directly for the chat, returning its status and data
+        _G.run = function(args)
+          local builtin = require("codecompanion.interactions.chat.tools.builtin.memory")
+          return builtin.cmds[1]({ chat = chat }, args)
+        end
+
+        -- A directory below the chat's working directory, with memory of its own
+        _G.SUB = vim.fs.joinpath(_G.TEST_CWD, "sub")
+        vim.fn.mkdir(vim.fs.joinpath(_G.SUB, "memories"), "p")
+        vim.fn.writefile({ "in sub" }, vim.fs.joinpath(_G.SUB, "memories", "sub.md"))
+
       ]])
     end,
     post_case = function()
@@ -2214,6 +2229,184 @@ T["cwd"]["the index names its directory"] = function()
   h.expect_contains(res.first, res.listed)
   h.expect_contains("Your memory directory `/memories` (`", res.empty)
   h.expect_contains(res.second .. ") is empty", res.empty)
+end
+
+T["cwd"]["a cwd below the working directory reaches its memory"] = function()
+  local res = child.lua([[
+    local viewed = _G.call({ command = "view", path = "/memories/sub.md", cwd = _G.SUB })
+    local created = _G.call({ command = "create", path = "/memories/new.md", file_text = "new", cwd = _G.SUB })
+
+    -- One without a memories directory yet gets one
+    local fresh = vim.fs.joinpath(_G.TEST_CWD, "fresh")
+    vim.fn.mkdir(fresh, "p")
+    local fresh_created = _G.run({ command = "create", path = "/memories/a.md", file_text = "a", cwd = fresh })
+
+    return {
+      viewed = viewed,
+      created = created,
+      sub = vim.fn.fnamemodify(_G.SUB, ":~"),
+      written = vim.fn.readfile(vim.fs.joinpath(_G.SUB, "memories", "new.md")),
+      own = vim.uv.fs_stat(vim.fs.joinpath(_G.MEMORY_DIR_ABSOLUTE, "new.md")) ~= nil,
+      fresh = fresh_created.status,
+      fresh_written = vim.fn.readfile(vim.fs.joinpath(fresh, "memories", "a.md")),
+    }
+  ]])
+
+  h.expect_contains("in sub", res.viewed)
+  h.expect_contains('cwd="' .. res.sub .. '"', res.viewed)
+  h.expect_contains("in `" .. res.sub .. "/memories`", res.created)
+  h.eq({ "new" }, res.written)
+  h.eq(false, res.own)
+  h.eq("success", res.fresh)
+  h.eq({ "a" }, res.fresh_written)
+end
+
+T["cwd"]["the chat's own working directory counts as omitted"] = function()
+  local res = child.lua([[
+    return {
+      physical = _G.call({ command = "view", path = "/memories/first.md", cwd = vim.fn.getcwd() }),
+      lexical = _G.run({ command = "view", path = "/memories/first.md", cwd = _G.TEST_CWD }),
+      empty = _G.run({ command = "view", path = "/memories/first.md", cwd = "" }),
+      null = _G.run({ command = "view", path = "/memories/first.md", cwd = vim.NIL }),
+    }
+  ]])
+
+  h.expect_contains("in first", res.physical)
+  h.eq(nil, res.physical:find('cwd="', 1, true))
+  h.eq("in first\n", res.lexical.data)
+  h.eq("in first\n", res.empty.data)
+  h.eq("in first\n", res.null.data)
+end
+
+T["cwd"]["a bad cwd is an error, and nothing is created"] = function()
+  local res = child.lua([[
+    vim.fn.writefile({}, vim.fs.joinpath(_G.TEST_CWD, "file.txt"))
+    local function create(cwd)
+      return _G.run({ command = "create", path = "/memories/x.md", file_text = "x", cwd = cwd })
+    end
+
+    return {
+      relative = create("sub"),
+      missing = create(vim.fs.joinpath(_G.TEST_CWD, "nope")),
+      file = create(vim.fs.joinpath(_G.TEST_CWD, "file.txt")),
+      number = create(42),
+      created = vim
+        .iter({ "nope", "sub/memories/x.md", "memories/x.md" })
+        :filter(function(p)
+          return vim.uv.fs_stat(vim.fs.joinpath(_G.TEST_CWD, p)) ~= nil
+        end)
+        :totable(),
+    }
+  ]])
+
+  h.eq("error", res.relative.status)
+  h.expect_contains("cwd must be an absolute path: sub", res.relative.data)
+  h.eq("error", res.missing.status)
+  h.expect_contains("Directory does not exist", res.missing.data)
+  h.eq("error", res.file.status)
+  h.expect_contains("Not a directory", res.file.data)
+  h.eq("error", res.number.status)
+  h.expect_contains("cwd must be a string", res.number.data)
+  h.eq({}, res.created)
+end
+
+T["cwd"]["a cwd outside the working directory is refused"] = function()
+  local res = child.lua([[
+    local function view(cwd)
+      return _G.run({ command = "view", path = "/memories", cwd = cwd })
+    end
+    return {
+      view(vim.fs.dirname(_G.TEST_CWD)),
+      view(_G.OTHER_CWD),
+      view(_G.SUB .. "/../.."),
+    }
+  ]])
+
+  for _, output in ipairs(res) do
+    h.eq("error", output.status)
+    h.expect_contains("outside the chat's working directory", output.data)
+  end
+end
+
+T["cwd"]["a cwd follows symlinks"] = function()
+  local res = child.lua([[
+    local other = vim.fs.joinpath(_G.OTHER_CWD, "memories")
+    vim.uv.fs_symlink(_G.OTHER_CWD, vim.fs.joinpath(_G.TEST_CWD, "link"))
+    vim.fn.mkdir(vim.fs.joinpath(_G.TEST_CWD, "sub2"), "p")
+    vim.uv.fs_symlink(other, vim.fs.joinpath(_G.TEST_CWD, "sub2", "memories"))
+
+    local link = _G.run({ command = "view", path = "/memories", cwd = vim.fs.joinpath(_G.TEST_CWD, "link") })
+    local sub2 = _G.run({ command = "view", path = "/memories", cwd = vim.fs.joinpath(_G.TEST_CWD, "sub2") })
+
+    -- The chat's own memories may still be a symlink, as long as no cwd is passed
+    vim.fn.delete(_G.MEMORY_DIR_ABSOLUTE, "rf")
+    vim.uv.fs_symlink(other, _G.MEMORY_DIR_ABSOLUTE)
+    local own = _G.run({ command = "view", path = "/memories/other.md" })
+
+    return { link = link, sub2 = sub2, own = own }
+  ]])
+
+  h.eq("error", res.link.status)
+  h.expect_contains("outside the chat's working directory", res.link.data)
+  h.eq("error", res.sub2.status)
+  h.expect_contains("outside the chat's working directory", res.sub2.data)
+  h.eq("in other\n", res.own.data)
+end
+
+T["cwd"]["a cwd expands ~"] = function()
+  local output = child.lua([[
+    vim.env.HOME = vim.fs.dirname(_G.TEST_CWD)
+    local cwd = "~/" .. vim.fs.basename(_G.TEST_CWD) .. "/sub"
+    return _G.run({ command = "view", path = "/memories/sub.md", cwd = cwd })
+  ]])
+
+  h.eq("in sub\n", output.data)
+end
+
+T["cwd"]["a cwd keeps traversal rejected"] = function()
+  local output = child.lua([[
+    return _G.run({ command = "view", path = "/memories/../sub.md", cwd = _G.SUB })
+  ]])
+
+  h.eq("error", output.status)
+  h.expect_contains("Must reside within the /memories directory", output.data)
+end
+
+T["cwd"]["a cwd leaves the index alone"] = function()
+  local prompt = child.lua([[
+    _G.request()
+    _G.call({ command = "create", path = "/memories/sub-new.md", file_text = "x", cwd = _G.SUB })
+    return _G.memory_prompt()
+  ]])
+
+  h.expect_contains("/memories/first.md", prompt)
+  h.eq(nil, prompt:find("sub-new.md", 1, true))
+  h.eq(nil, prompt:find("sub.md", 1, true))
+end
+
+T["cwd"]["the approval prompt names the physical directory of a cwd"] = function()
+  local res = child.lua([[
+    local other = vim.fs.joinpath(_G.OTHER_CWD, "memories")
+    vim.fn.mkdir(vim.fs.joinpath(_G.TEST_CWD, "sub2"), "p")
+    vim.uv.fs_symlink(other, vim.fs.joinpath(_G.TEST_CWD, "sub2", "memories"))
+
+    local builtin = require("codecompanion.interactions.chat.tools.builtin.memory")
+    local function prompt(args)
+      return builtin.output.prompt({ args = args }, { tools = { chat = chat } })
+    end
+
+    return {
+      sub = prompt({ command = "view", path = "/memories/sub.md", cwd = _G.SUB }),
+      linked = prompt({ command = "delete", path = "/memories/x.md", cwd = vim.fs.joinpath(_G.TEST_CWD, "sub2") }),
+      own = prompt({ command = "view", path = "/memories" }),
+      sub_real = vim.fn.fnamemodify(vim.uv.fs_realpath(vim.fs.joinpath(_G.SUB, "memories")), ":~"),
+      other_real = vim.fn.fnamemodify(vim.uv.fs_realpath(other), ":~"),
+    }
+  ]])
+
+  h.eq("View /memories/sub.md in `" .. res.sub_real .. "`?", res.sub)
+  h.eq("Delete /memories/x.md in `" .. res.other_real .. "`?", res.linked)
+  h.eq("View /memories?", res.own)
 end
 -- /FORK(memory-cwd)
 

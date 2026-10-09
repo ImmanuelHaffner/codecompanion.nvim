@@ -361,6 +361,25 @@ return {
       -- FORK(memory-cwd): resolve against the calling chat. The runner passes the chat's tools as
       -- `self`; a caller invoking the command on the tool table itself has no chat, and gets the cwd
       local root = memory.get_root(self.chat)
+      -- A call's `cwd` points /memories at another directory's memory, for now only one below the chat's
+      -- working directory
+      local resolved, cwd_err = memory.resolve_cwd(self.chat, args.cwd)
+      if cwd_err then
+        return output_msg("error", cwd_err)
+      end
+      if resolved then
+        if not resolved.inside then
+          return output_msg(
+            "error",
+            fmt(
+              "Memory in `%s` is outside the chat's working directory `%s`; it needs the user's approval, which this tool cannot ask for yet.",
+              vim.fn.fnamemodify(resolved.real, ":~"),
+              vim.fn.fnamemodify(vim.fs.dirname(root), ":~")
+            )
+          )
+        end
+        root = resolved.root
+      end
       -- /FORK(memory-cwd)
 
       log:trace("[Memory Tool] Executing command: %s", command)
@@ -514,6 +533,12 @@ return {
             type = "string",
             description = "Required for rename command. The new path for the file or directory.",
           },
+          -- FORK(memory-cwd): another directory's memory
+          cwd = {
+            type = "string",
+            description = "Optional, for any command. An absolute or ~ path to an existing directory; for this call, /memories then refers to that directory's memories directory instead of your own. Its memory is not listed for you: view /memories with this cwd to see it. Omit it for your own memory. A subdirectory of your working directory needs no approval; any other directory needs the user's.",
+          },
+          -- /FORK(memory-cwd)
         },
         required = { "command" },
       },
@@ -541,21 +566,31 @@ return {
       local args = self.args
       local command = args.command
 
-      if command == "view" then
-        return fmt("View %s?", args.path)
-      elseif command == "create" then
-        return fmt("Create file at %s?", args.path)
-      elseif command == "str_replace" then
-        return fmt("Replace text in %s?", args.path)
-      elseif command == "insert" then
-        return fmt("Insert text at line %d in %s?", args.insert_line or 0, args.path)
-      elseif command == "delete" then
-        return fmt("Delete %s?", args.path)
-      elseif command == "rename" then
-        return fmt("Rename %s to %s?", args.old_path, args.new_path)
+      -- FORK(memory-cwd): name the physical directory a call's `cwd` points /memories at
+      local resolved = memory.resolve_cwd(meta and meta.tools and meta.tools.chat, args.cwd)
+      local function ask(action)
+        if resolved then
+          return fmt("%s in `%s`?", action, vim.fn.fnamemodify(resolved.real, ":~"))
+        end
+        return action .. "?"
       end
 
-      return "Execute memory command?"
+      if command == "view" then
+        return ask(fmt("View %s", args.path))
+      elseif command == "create" then
+        return ask(fmt("Create file at %s", args.path))
+      elseif command == "str_replace" then
+        return ask(fmt("Replace text in %s", args.path))
+      elseif command == "insert" then
+        return ask(fmt("Insert text at line %d in %s", args.insert_line or 0, args.path))
+      elseif command == "delete" then
+        return ask(fmt("Delete %s", args.path))
+      elseif command == "rename" then
+        return ask(fmt("Rename %s to %s", args.old_path, args.new_path))
+      end
+
+      return ask("Execute memory command")
+      -- /FORK(memory-cwd)
     end,
 
     ---@param self CodeCompanion.Tool.Memory
@@ -565,21 +600,27 @@ return {
       local chat = meta.tools.chat
       local cmd = meta.cmd
 
+      -- FORK(memory-cwd): tell the LLM which directory a call's `cwd` reached
+      local resolved = memory.resolve_cwd(chat, cmd.cwd)
+      local where = resolved and fmt(" in `%s`", vim.fn.fnamemodify(resolved.root, ":~")) or ""
       local llm_output = ""
 
       if cmd.command == "view" then
-        llm_output = fmt('<memoryTool filepath="%s">%s</memoryTool>', cmd.path, vim.iter(stdout):flatten():join("\n"))
+        local attr = resolved and fmt(' cwd="%s"', vim.fn.fnamemodify(vim.fs.dirname(resolved.root), ":~")) or ""
+        llm_output =
+          fmt('<memoryTool filepath="%s"%s>%s</memoryTool>', cmd.path, attr, vim.iter(stdout):flatten():join("\n"))
       elseif cmd.command == "create" then
-        llm_output = fmt("<memoryTool>Created file at %s</memoryTool>", cmd.path)
+        llm_output = fmt("<memoryTool>Created file at %s%s</memoryTool>", cmd.path, where)
       elseif cmd.command == "str_replace" then
-        llm_output = fmt("<memoryTool>Replaced text in %s</memoryTool>", cmd.path)
+        llm_output = fmt("<memoryTool>Replaced text in %s%s</memoryTool>", cmd.path, where)
       elseif cmd.command == "insert" then
-        llm_output = fmt("<memoryTool>Inserted text at line %d in %s</memoryTool>", cmd.insert_line, cmd.path)
+        llm_output = fmt("<memoryTool>Inserted text at line %d in %s%s</memoryTool>", cmd.insert_line, cmd.path, where)
       elseif cmd.command == "delete" then
-        llm_output = fmt("<memoryTool>Deleted %s</memoryTool>", cmd.path)
+        llm_output = fmt("<memoryTool>Deleted %s%s</memoryTool>", cmd.path, where)
       elseif cmd.command == "rename" then
-        llm_output = fmt("<memoryTool>Renamed %s to %s</memoryTool>", cmd.old_path, cmd.new_path)
+        llm_output = fmt("<memoryTool>Renamed %s to %s%s</memoryTool>", cmd.old_path, cmd.new_path, where)
       end
+      -- /FORK(memory-cwd)
 
       chat:add_tool_output(self, llm_output, "")
     end,

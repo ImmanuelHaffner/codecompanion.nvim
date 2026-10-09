@@ -58,6 +58,53 @@ function M.sync_root(chat)
 end
 -- /FORK(memory-cwd)
 
+-- FORK(memory-cwd): another directory's memory, named by a call's `cwd`
+---@class CodeCompanion.Memory.ResolvedCwd
+---@field root string The `memories` directory under `cwd` as given (normalised), where files are read and written
+---@field real string Its physical path: the realpath of `root`, or where it would be created while it doesn't exist
+---@field inside boolean Whether `real` lies strictly below the realpath of the chat's working directory
+
+---Resolve a memory call's `cwd` against the working directory of the chat's root for this request
+---@param chat? CodeCompanion.Chat
+---@param cwd any The call's `cwd` argument
+---@return CodeCompanion.Memory.ResolvedCwd|nil resolved nil when omitted, the chat's own directory, or an error
+---@return string|nil err
+function M.resolve_cwd(chat, cwd)
+  -- Models fill optional parameters with null or an empty string
+  if cwd == nil or cwd == vim.NIL or cwd == "" then
+    return nil
+  end
+  if type(cwd) ~= "string" then
+    return nil, "cwd must be a string"
+  end
+
+  local dir = vim.fs.normalize(cwd)
+  if vim.fn.isabsolutepath(dir) == 0 then
+    return nil, fmt("cwd must be an absolute path: %s", cwd)
+  end
+  local dir_real = vim.uv.fs_realpath(dir)
+  if not dir_real then
+    return nil, fmt("Directory does not exist: %s", cwd)
+  end
+  local stat = vim.uv.fs_stat(dir_real)
+  if not stat or stat.type ~= "directory" then
+    return nil, fmt("Not a directory: %s", cwd)
+  end
+
+  -- The root already fixed for this request, so the boundary moves only when /memories does
+  local base = vim.fs.dirname(M.get_root(chat))
+  local base_real = vim.uv.fs_realpath(base) or base
+  if dir_real == base_real then
+    return nil
+  end
+
+  local root = vim.fs.joinpath(dir, M.DIR)
+  local real = vim.uv.fs_realpath(root) or vim.fs.joinpath(dir_real, M.DIR)
+  local prefix = vim.endswith(base_real, "/") and base_real or (base_real .. "/")
+  return { root = root, real = real, inside = vim.startswith(real, prefix) }
+end
+-- /FORK(memory-cwd)
+
 -- FORK(memory-cwd): index the chat's own root
 ---Every memory, addressed the way the LLM must pass it back to the memory tool
 ---@param chat? CodeCompanion.Chat
