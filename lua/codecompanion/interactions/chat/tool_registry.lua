@@ -74,7 +74,9 @@ local function add_system_prompt(chat, tool, id)
   if tool and tool.system_prompt then
     local system_prompt
     if type(tool.system_prompt) == "function" then
-      system_prompt = tool.system_prompt(tool.schema)
+      -- FORK(memory-cwd): tell the tool which chat it is added to, so its prompt can describe that chat
+      system_prompt = tool.system_prompt(tool.schema, { chat = chat })
+      -- /FORK(memory-cwd)
     elseif type(tool.system_prompt) == "string" then
       system_prompt = tostring(tool.system_prompt)
     end

@@ -9,16 +9,25 @@ local M = {}
 M.DIR = "memories"
 M.PREFIX = "/" .. M.DIR
 
+-- FORK(memory-cwd): a chat's own root, once one has been fixed for it
 ---The absolute path to the memory directory
+---@param chat? CodeCompanion.Chat
 ---@return string
-function M.get_root()
+function M.get_root(chat)
+  if chat and chat._memory_root then
+    return chat._memory_root
+  end
   return vim.fs.joinpath(vim.fn.getcwd(), M.DIR)
 end
+-- /FORK(memory-cwd)
 
+-- FORK(memory-cwd): index the chat's own root
 ---Every memory, addressed the way the LLM must pass it back to the memory tool
+---@param chat? CodeCompanion.Chat
 ---@return string[]
-function M.get_index()
-  local root = M.get_root()
+function M.get_index(chat)
+  local root = M.get_root(chat)
+  -- /FORK(memory-cwd)
   if not files.is_dir(root) then
     return {}
   end
@@ -50,10 +59,13 @@ local function get_whitelisted_paths()
   return paths
 end
 
+-- FORK(memory-cwd): describe the chat's own root
 ---Tell the LLM what it has stored, and how to name what it stores next
+---@param chat? CodeCompanion.Chat
 ---@return string
-function M.get_prompt()
-  local index = M.get_index()
+function M.get_prompt(chat)
+  local index = M.get_index(chat)
+  -- /FORK(memory-cwd)
 
   local lines = {}
   if vim.tbl_isempty(index) then
@@ -100,7 +112,9 @@ function M.refresh_prompt(chat)
 
   for _, message in ipairs(chat.messages) do
     if message.context and message.context.id == id and message._meta and message._meta.tag == tags.TOOL then
-      message.content = M.get_prompt()
+      -- FORK(memory-cwd): refresh against the chat's own root
+      message.content = M.get_prompt(chat)
+      -- /FORK(memory-cwd)
       return
     end
   end

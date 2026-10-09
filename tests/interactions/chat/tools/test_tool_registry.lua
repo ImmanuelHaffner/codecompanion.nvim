@@ -47,6 +47,36 @@ T["ToolRegistry"][":add"]["adds a group to the registry"] = function()
   h.expect_tbl_contains("cmd", registry)
 end
 
+
+-- FORK(memory-cwd): a tool's system prompt learns which chat it is added to
+T["ToolRegistry"][":add"]["passes the chat to a tool's system_prompt"] = function()
+  child.lua([[
+    local chat = h.setup_chat_buffer({
+      interactions = {
+        chat = {
+          tools = {
+            prompt_probe = {
+              description = "Records what its system_prompt receives",
+              name = "prompt_probe",
+              cmds = {},
+              schema = { type = "function", ["function"] = { name = "prompt_probe", parameters = {} } },
+              system_prompt = function(_, ctx)
+                _G.prompt_ctx_is_chat = ctx ~= nil and ctx.chat == _G.probe_chat
+                return "probe prompt"
+              end,
+            },
+          },
+        },
+      },
+    })
+    _G.probe_chat = chat
+    chat.tool_registry:add("prompt_probe")
+  ]])
+
+  h.eq(true, child.lua_get([[_G.prompt_ctx_is_chat]]))
+end
+-- /FORK(memory-cwd)
+
 T["ToolRegistry"][":add"]["renders tool in the chat buffer"] = function()
   child.lua([[
     _G.chat.tool_registry:add("func")

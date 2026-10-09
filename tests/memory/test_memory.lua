@@ -103,4 +103,69 @@ T["Memory"]["shares the index when Anthropic defines the tool server-side"] = fu
   h.expect_match(contents, "%- /memories/parallel%-sub%-agents%.md")
 end
 
+-- FORK(memory-cwd): the root belongs to a chat
+T["Memory"]["root"] = new_set({
+  hooks = {
+    pre_case = function()
+      child.lua([[
+        _G.OTHER_ROOT = vim.fs.joinpath(vim.fn.tempname(), "memories")
+        vim.fn.mkdir(_G.OTHER_ROOT, "p")
+        vim.fn.writefile({ "in other" }, vim.fs.joinpath(_G.OTHER_ROOT, "other.md"))
+      ]])
+    end,
+    post_case = function()
+      child.lua([[pcall(vim.fn.delete, vim.fs.dirname(_G.OTHER_ROOT), "rf")]])
+    end,
+  },
+})
+
+T["Memory"]["root"]["defaults to the cwd"] = function()
+  local roots = child.lua([[
+    local memory = require("codecompanion.memory")
+    return { expected = vim.fs.joinpath(vim.fn.getcwd(), "memories"), bare = memory.get_root(), chat = memory.get_root(_G.chat) }
+  ]])
+
+  h.eq(roots.expected, roots.bare)
+  h.eq(roots.expected, roots.chat)
+end
+
+T["Memory"]["root"]["is the chat's own once set"] = function()
+  local res = child.lua([[
+    local memory = require("codecompanion.memory")
+    _G.chat._memory_root = _G.OTHER_ROOT
+    return { root = memory.get_root(_G.chat), prompt = memory.get_prompt(_G.chat) }
+  ]])
+
+  h.eq(child.lua_get("_G.OTHER_ROOT"), res.root)
+  h.expect_match(res.prompt, "%- /memories/other%.md")
+end
+
+T["Memory"]["root"]["is where a chat's tool call resolves"] = function()
+  child.lua([[
+    -- The case's chat, since a new one can't load the test config once the cwd has moved
+    local chat, tools = _G.chat, _G.chat.tools
+    require("codecompanion.interactions.chat.tools.approvals"):set_mode(chat.bufnr, { mode = "yolo" })
+    chat._memory_root = _G.OTHER_ROOT
+    _G.call_chat = chat
+
+    local n = #chat.messages
+    tools:execute(chat, {
+      {
+        id = "root_call",
+        type = "function",
+        ["function"] = {
+          name = "memory",
+          arguments = vim.json.encode({ command = "view", path = "/memories/other.md" }),
+        },
+      },
+    })
+    vim.wait(5000, function()
+      return #chat.messages > n and chat.tool_orchestrator == nil
+    end, 10)
+  ]])
+
+  h.expect_contains("in other", child.lua_get("_G.call_chat.messages[#_G.call_chat.messages].content"))
+end
+-- /FORK(memory-cwd)
+
 return T

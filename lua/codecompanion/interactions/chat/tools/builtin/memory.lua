@@ -10,12 +10,15 @@ local CONSTANTS = {
   MAX_VIEW_CHARS = 16000,
 }
 
+-- FORK(memory-cwd): /memories maps to the calling chat's root rather than the current cwd
 ---Build a lookup of allowed path prefixes and their absolute roots
 ---@param whitelist? { path: string, as: string }[]
+---@param root string The absolute directory /memories refers to
 ---@return { prefix: string, root: string }[]
-local function get_allowed_paths(whitelist)
+local function get_allowed_paths(whitelist, root)
   local allowed = {
-    { prefix = memory.PREFIX, root = memory.get_root() },
+    { prefix = memory.PREFIX, root = root },
+    -- /FORK(memory-cwd)
   }
   for _, entry in ipairs(whitelist or {}) do
     if type(entry.path) == "string" and entry.path ~= "" and type(entry.as) == "string" and entry.as ~= "" then
@@ -33,11 +36,14 @@ local function get_allowed_paths(whitelist)
   return allowed
 end
 
+-- FORK(memory-cwd): pass the chat's root on
 ---Validate and normalize a memory path to prevent directory traversal
 ---@param path string The path to validate
 ---@param whitelist? { path: string, as: string }[]
+---@param root string The absolute directory /memories refers to
 ---@return string normalized_path
-local function validate_path(path, whitelist)
+local function validate_path(path, whitelist, root)
+  -- /FORK(memory-cwd)
   if type(path) ~= "string" or path == "" then
     error("Path must be a non-empty string")
   end
@@ -49,7 +55,9 @@ local function validate_path(path, whitelist)
     error("Path contains invalid characters")
   end
 
-  local allowed = get_allowed_paths(whitelist)
+  -- FORK(memory-cwd): pass the chat's root on
+  local allowed = get_allowed_paths(whitelist, root)
+  -- /FORK(memory-cwd)
 
   -- Find which allowed prefix this path matches
   local matched_root
@@ -118,13 +126,16 @@ local function list_directory(root)
   return entries
 end
 
+-- FORK(memory-cwd): pass the chat's root on
 ---Shows directory contents or file contents with optional line ranges
 ---@param path string
 ---@param view_range? [number, number] The range of lines to view (start_line, end_line)
 ---@param whitelist? { path: string, as: string }[]
+---@param root string The absolute directory /memories refers to
 ---@return string content
-local function view(path, view_range, whitelist)
-  local normalized_path = validate_path(path, whitelist)
+local function view(path, view_range, whitelist, root)
+  local normalized_path = validate_path(path, whitelist, root)
+  -- /FORK(memory-cwd)
 
   if not file_utils.exists(normalized_path) then
     error(fmt("Path does not exist: %s", path))
@@ -179,13 +190,16 @@ local function view(path, view_range, whitelist)
   return content
 end
 
+-- FORK(memory-cwd): pass the chat's root on
 ---Create or overwrite a file with content
 ---@param path string The file path to create
 ---@param file_text string The content to write
 ---@param whitelist? { path: string, as: string }[]
+---@param root string The absolute directory /memories refers to
 ---@return nil
-local function create(path, file_text, whitelist)
-  local normalized_path = validate_path(path, whitelist)
+local function create(path, file_text, whitelist, root)
+  local normalized_path = validate_path(path, whitelist, root)
+  -- /FORK(memory-cwd)
 
   -- Ensure parent directories exist
   local parent_dir = vim.fn.fnamemodify(normalized_path, ":h")
@@ -200,14 +214,17 @@ local function create(path, file_text, whitelist)
   end
 end
 
+-- FORK(memory-cwd): pass the chat's root on
 ---Replace text in a file
 ---@param path string The file path
 ---@param old_str string The text to find
 ---@param new_str string The text to replace with
 ---@param whitelist? { path: string, as: string }[]
+---@param root string The absolute directory /memories refers to
 ---@return nil
-local function str_replace(path, old_str, new_str, whitelist)
-  local normalized_path = validate_path(path, whitelist)
+local function str_replace(path, old_str, new_str, whitelist, root)
+  local normalized_path = validate_path(path, whitelist, root)
+  -- /FORK(memory-cwd)
 
   if not file_utils.exists(normalized_path) then
     error(fmt("File does not exist: %s", path))
@@ -234,14 +251,17 @@ local function str_replace(path, old_str, new_str, whitelist)
   file_utils.write_to_path(normalized_path, new_content)
 end
 
+-- FORK(memory-cwd): pass the chat's root on
 ---Insert text at a specific line
 ---@param path string The file path
 ---@param insert_line number The line number to insert at (1-indexed)
 ---@param insert_text string The text to insert
 ---@param whitelist? { path: string, as: string }[]
+---@param root string The absolute directory /memories refers to
 ---@return nil
-local function insert(path, insert_line, insert_text, whitelist)
-  local normalized_path = validate_path(path, whitelist)
+local function insert(path, insert_line, insert_text, whitelist, root)
+  local normalized_path = validate_path(path, whitelist, root)
+  -- /FORK(memory-cwd)
 
   if not file_utils.exists(normalized_path) then
     error(fmt("File does not exist: %s", path))
@@ -263,15 +283,18 @@ local function insert(path, insert_line, insert_text, whitelist)
   file_utils.write_to_path(normalized_path, new_content)
 end
 
+-- FORK(memory-cwd): pass the chat's root on
 ---Delete a file or directory
 ---@param path string The path to delete
 ---@param whitelist? { path: string, as: string }[]
+---@param root string The absolute directory /memories refers to
 ---@return nil
-local function delete(path, whitelist)
-  local normalized_path = validate_path(path, whitelist)
+local function delete(path, whitelist, root)
+  local normalized_path = validate_path(path, whitelist, root)
 
   -- Prevent deletion of any root directory (memories or whitelisted)
-  local allowed = get_allowed_paths(whitelist)
+  local allowed = get_allowed_paths(whitelist, root)
+  -- /FORK(memory-cwd)
   for _, entry in ipairs(allowed) do
     if normalized_path == vim.fs.normalize(entry.root) then
       error(fmt("Cannot delete the root directory: %s", entry.prefix))
@@ -288,14 +311,17 @@ local function delete(path, whitelist)
   end
 end
 
+-- FORK(memory-cwd): pass the chat's root on
 ---Rename or move a file or directory
 ---@param old_path string The current path
 ---@param new_path string The new path
 ---@param whitelist? { path: string, as: string }[]
+---@param root string The absolute directory /memories refers to
 ---@return nil
-local function rename(old_path, new_path, whitelist)
-  local normalized_old = validate_path(old_path, whitelist)
-  local normalized_new = validate_path(new_path, whitelist)
+local function rename(old_path, new_path, whitelist, root)
+  local normalized_old = validate_path(old_path, whitelist, root)
+  local normalized_new = validate_path(new_path, whitelist, root)
+  -- /FORK(memory-cwd)
 
   if not file_utils.exists(normalized_old) then
     error(fmt("Source path does not exist: %s", old_path))
@@ -332,6 +358,10 @@ return {
 
       local tool_opts = self.tool and self.tool.opts
       local whitelist = tool_opts and tool_opts.whitelist
+      -- FORK(memory-cwd): resolve against the calling chat. The runner passes the chat's tools as
+      -- `self`; a caller invoking the command on the tool table itself has no chat, and gets the cwd
+      local root = memory.get_root(self.chat)
+      -- /FORK(memory-cwd)
 
       log:trace("[Memory Tool] Executing command: %s", command)
 
@@ -339,7 +369,9 @@ return {
         if not args.path then
           return output_msg("error", "The 'view' command requires a 'path' parameter")
         end
-        local ok, output = pcall(view, args.path, args.view_range, whitelist)
+        -- FORK(memory-cwd): pass the chat's root on
+        local ok, output = pcall(view, args.path, args.view_range, whitelist, root)
+        -- /FORK(memory-cwd)
         if not ok then
           log:debug("[Memory Tool] View error: %s", output)
           return output_msg("error", output)
@@ -351,7 +383,9 @@ return {
         if not args.path then
           return output_msg("error", "The 'create' command requires a 'path' parameter")
         end
-        local ok, output = pcall(create, args.path, args.file_text, whitelist)
+        -- FORK(memory-cwd): pass the chat's root on
+        local ok, output = pcall(create, args.path, args.file_text, whitelist, root)
+        -- /FORK(memory-cwd)
         if not ok then
           log:debug("[Memory Tool] Create error: %s", output)
           return output_msg("error", output)
@@ -366,7 +400,9 @@ return {
         if not args.old_str then
           return output_msg("error", "The 'str_replace' command requires an 'old_str' parameter")
         end
-        local ok, output = pcall(str_replace, args.path, args.old_str, args.new_str or "", whitelist)
+        -- FORK(memory-cwd): pass the chat's root on
+        local ok, output = pcall(str_replace, args.path, args.old_str, args.new_str or "", whitelist, root)
+        -- /FORK(memory-cwd)
         if not ok then
           log:debug("[Memory Tool] String replace error: %s", output)
           return output_msg("error", output)
@@ -384,7 +420,9 @@ return {
         if not args.insert_text then
           return output_msg("error", "The 'insert' command requires an 'insert_text' parameter")
         end
-        local ok, output = pcall(insert, args.path, args.insert_line, args.insert_text, whitelist)
+        -- FORK(memory-cwd): pass the chat's root on
+        local ok, output = pcall(insert, args.path, args.insert_line, args.insert_text, whitelist, root)
+        -- /FORK(memory-cwd)
         if not ok then
           log:debug("[Memory Tool] Insert error: %s", output)
           return output_msg("error", output)
@@ -396,7 +434,9 @@ return {
         if not args.path then
           return output_msg("error", "The 'delete' command requires a 'path' parameter")
         end
-        local ok, output = pcall(delete, args.path, whitelist)
+        -- FORK(memory-cwd): pass the chat's root on
+        local ok, output = pcall(delete, args.path, whitelist, root)
+        -- /FORK(memory-cwd)
         if not ok then
           log:debug("[Memory Tool] Delete error: %s", output)
           return output_msg("error", output)
@@ -411,7 +451,9 @@ return {
         if not args.new_path then
           return output_msg("error", "The 'rename' command requires a 'new_path' parameter")
         end
-        local ok, output = pcall(rename, args.old_path, args.new_path, whitelist)
+        -- FORK(memory-cwd): pass the chat's root on
+        local ok, output = pcall(rename, args.old_path, args.new_path, whitelist, root)
+        -- /FORK(memory-cwd)
         if not ok then
           log:debug("[Memory Tool] Rename error: %s", output)
           return output_msg("error", output)
@@ -477,9 +519,11 @@ return {
       },
     },
   },
-  system_prompt = function()
-    return memory.get_prompt()
+  -- FORK(memory-cwd): index the root of the chat the tool is added to
+  system_prompt = function(_, ctx)
+    return memory.get_prompt(ctx and ctx.chat)
   end,
+  -- /FORK(memory-cwd)
   handlers = {
     ---@param self CodeCompanion.Tool.Memory
     ---@param meta { tools: CodeCompanion.Tools }
