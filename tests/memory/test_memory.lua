@@ -62,7 +62,9 @@ end
 T["Memory"]["prompt says the directory is empty when there are no memories"] = function()
   local prompt = child.lua([[return require("codecompanion.memory").get_prompt()]])
 
-  h.expect_match(prompt, "Your memory directory `/memories` is empty")
+  -- FORK(memory-cwd): the prompt names the directory /memories stands for
+  h.expect_match(prompt, "Your memory directory `/memories` %(`.*/memories`%) is empty")
+  -- /FORK(memory-cwd)
   h.expect_match(prompt, "Name a memory so that the file name alone says what it holds")
 end
 

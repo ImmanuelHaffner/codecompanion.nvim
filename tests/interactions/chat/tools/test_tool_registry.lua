@@ -47,7 +47,6 @@ T["ToolRegistry"][":add"]["adds a group to the registry"] = function()
   h.expect_tbl_contains("cmd", registry)
 end
 
-
 -- FORK(memory-cwd): a tool's system prompt learns which chat it is added to
 T["ToolRegistry"][":add"]["passes the chat to a tool's system_prompt"] = function()
   child.lua([[

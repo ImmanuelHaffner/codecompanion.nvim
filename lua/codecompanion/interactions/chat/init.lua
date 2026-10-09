@@ -42,6 +42,10 @@
 ---@field _last_role string The last role that was rendered in the chat buffer
 ---@field _status table Bookkeeping for the current status virtual text (extmark id + status flag)
 ---@field _tool_monitors? table A table of tool monitors that are currently running in the chat buffer
+-- FORK(memory-cwd): where the chat's memory lives
+---@field _memory_cwd? string The effective cwd of the chat's window, the last time it had one
+---@field _memory_root? string The memory directory fixed for the chat's current request
+-- /FORK(memory-cwd)
 
 ---@class CodeCompanion.ChatArgs Arguments that can be injected into the chat
 ---@field acp_command? string The command to use to connect via ACP
@@ -1375,6 +1379,11 @@ function Chat:submit(opts)
   if self.current_request then
     return log:debug("Chat request already in progress")
   end
+
+  -- FORK(memory-cwd): fix the memory root for this request, from the chat window's cwd, so every tool
+  -- call answering it resolves there and the index matches
+  require("codecompanion.memory").sync_root(self)
+  -- /FORK(memory-cwd)
 
   opts = opts or {}
 

@@ -2052,4 +2052,169 @@ T["validation"]["rejects null bytes in path"] = function()
   h.expect_match(output.data, "invalid characters")
 end
 
+-- FORK(memory-cwd): the memory tool must follow a change of the working directory
+T["cwd"] = new_set({
+  hooks = {
+    pre_case = function()
+      child.lua([[
+        _G.OTHER_CWD = vim.fn.tempname()
+        vim.fn.mkdir(vim.fs.joinpath(_G.OTHER_CWD, "memories"), "p")
+        vim.fn.writefile({ "in first" }, vim.fs.joinpath(_G.MEMORY_DIR_ABSOLUTE, "first.md"))
+        vim.fn.writefile({ "in other" }, vim.fs.joinpath(_G.OTHER_CWD, "memories", "other.md"))
+
+        chat, tools = h.setup_chat_buffer({
+          interactions = { chat = { tools = { memory = { opts = { require_approval_before = false } } } } },
+        })
+        chat.tool_registry:add("memory")
+
+        -- The memory index the LLM is shown
+        _G.memory_prompt = function()
+          for _, message in ipairs(chat.messages) do
+            if (message.content or ""):find("memory directory", 1, true) then
+              return message.content
+            end
+          end
+        end
+
+        -- A request, which is when the chat fixes its memory root
+        _G.request = function()
+          h.send_to_llm(chat, "ok")
+        end
+
+        -- A memory call through the orchestrator, returning what the LLM gets back
+        _G.view = function(path)
+          local n = #chat.messages
+          tools:execute(chat, {
+            {
+              id = "cwd_call_" .. n,
+              type = "function",
+              ["function"] = { name = "memory", arguments = vim.json.encode({ command = "view", path = path }) },
+            },
+          })
+          vim.wait(5000, function()
+            return #chat.messages > n and chat.tool_orchestrator == nil
+          end, 10)
+          return chat.messages[#chat.messages].content
+        end
+      ]])
+    end,
+    post_case = function()
+      child.lua([[pcall(vim.fn.delete, _G.OTHER_CWD, "rf")]])
+    end,
+  },
+})
+
+T["cwd"]["the index lists the new working directory's memories"] = function()
+  h.expect_contains("/memories/first.md", child.lua_get("_G.memory_prompt()"))
+
+  child.lua([[
+    vim.cmd.cd(_G.OTHER_CWD)
+    _G.request()
+  ]])
+
+  local prompt = child.lua_get("_G.memory_prompt()")
+  h.expect_contains("/memories/other.md", prompt)
+  h.eq(prompt:find("/memories/first.md", 1, true), nil)
+end
+
+T["cwd"]["a call reaches the new working directory's memories"] = function()
+  child.lua([[vim.cmd.cd(_G.OTHER_CWD)]])
+
+  h.expect_contains("in other", child.lua_get([[_G.view("/memories/other.md")]]))
+end
+
+T["cwd"]["follows :cd with the chat shown"] = function()
+  child.lua([[
+    vim.cmd.cd(_G.OTHER_CWD)
+    _G.request()
+  ]])
+
+  h.expect_contains("/memories/other.md", child.lua_get("_G.memory_prompt()"))
+  h.expect_contains("in other", child.lua_get([[_G.view("/memories/other.md")]]))
+end
+
+T["cwd"]["follows :tcd in the chat's tab"] = function()
+  child.lua([[
+    vim.cmd.tcd(_G.OTHER_CWD)
+    _G.request()
+  ]])
+
+  h.expect_contains("/memories/other.md", child.lua_get("_G.memory_prompt()"))
+end
+
+T["cwd"]["ignores :lcd in another window, and focus"] = function()
+  child.lua([[
+    vim.cmd("vsplit | enew")
+    vim.cmd.lcd(_G.OTHER_CWD)
+    _G.request()
+  ]])
+
+  h.expect_contains("/memories/first.md", child.lua_get("_G.memory_prompt()"))
+  -- Focus is still in the window with the local cwd
+  h.expect_contains("in first", child.lua_get([[_G.view("/memories/first.md")]]))
+end
+
+T["cwd"]["a hidden chat keeps the cwd of its last window"] = function()
+  local has_window = child.lua([[
+    _G.request()
+    chat.ui:hide()
+    vim.cmd.cd(_G.OTHER_CWD)
+    _G.request()
+    return require("codecompanion.utils.ui").buf_get_win(chat.bufnr) ~= nil
+  ]])
+
+  h.eq(false, has_window)
+  h.expect_contains("/memories/first.md", child.lua_get("_G.memory_prompt()"))
+end
+
+T["cwd"]["a chat in another tab follows that tab"] = function()
+  child.lua([[
+    vim.cmd.tcd(_G.OTHER_CWD)
+    vim.cmd.tabnew()
+    vim.cmd.tcd(_G.TEST_CWD)
+    _G.request()
+  ]])
+
+  h.expect_contains("/memories/other.md", child.lua_get("_G.memory_prompt()"))
+end
+
+T["cwd"]["the root stays fixed until the next request"] = function()
+  child.lua([[
+    _G.request()
+    vim.cmd.cd(_G.OTHER_CWD)
+  ]])
+
+  h.expect_contains("in first", child.lua_get([[_G.view("/memories/first.md")]]))
+
+  child.lua([[_G.request()]])
+  h.expect_contains("in other", child.lua_get([[_G.view("/memories/other.md")]]))
+end
+
+T["cwd"]["the index names its directory"] = function()
+  local res = child.lua([[
+    _G.request()
+    local listed = _G.memory_prompt()
+
+    _G.EMPTY_CWD = vim.fn.tempname()
+    vim.fn.mkdir(_G.EMPTY_CWD, "p")
+    vim.cmd.cd(_G.EMPTY_CWD)
+    _G.request()
+    local empty = _G.memory_prompt()
+    pcall(vim.fn.delete, _G.EMPTY_CWD, "rf")
+
+    return {
+      listed = listed,
+      empty = empty,
+      first = vim.fs.basename(_G.TEST_CWD) .. "/memories`",
+      second = vim.fs.basename(_G.EMPTY_CWD) .. "/memories`",
+    }
+  ]])
+
+  h.expect_contains("Below is everything in your memory directory `/memories` (`", res.listed)
+  h.expect_contains(res.first, res.listed)
+  h.expect_contains("Your memory directory `/memories` (`", res.empty)
+  h.expect_contains(res.second .. ") is empty", res.empty)
+end
+-- /FORK(memory-cwd)
+
 return T

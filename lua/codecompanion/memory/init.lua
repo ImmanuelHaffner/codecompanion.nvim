@@ -9,15 +9,52 @@ local M = {}
 M.DIR = "memories"
 M.PREFIX = "/" .. M.DIR
 
--- FORK(memory-cwd): a chat's own root, once one has been fixed for it
+-- FORK(memory-cwd): the root follows the chat's own window, and is fixed once per request
+---The window showing the chat, preferring the chat's own
+---@param chat CodeCompanion.Chat
+---@return number|nil
+local function chat_win(chat)
+  local winnr = chat.ui and chat.ui.winnr
+  if winnr and vim.api.nvim_win_is_valid(winnr) and vim.api.nvim_win_get_buf(winnr) == chat.bufnr then
+    return winnr
+  end
+  return require("codecompanion.utils.ui").buf_get_win(chat.bufnr)
+end
+
+---The working directory a chat's memory follows: its window's effective cwd, the one it had when last
+---shown while it is hidden, and the global cwd for a chat that has never had a window
+---@param chat CodeCompanion.Chat
+---@return string
+function M.chat_cwd(chat)
+  local winnr = chat_win(chat)
+  if winnr then
+    -- Without the tab, getcwd resolves the window in the current tab
+    local tabnr = vim.api.nvim_tabpage_get_number(vim.api.nvim_win_get_tabpage(winnr))
+    chat._memory_cwd = vim.fn.getcwd(winnr, tabnr)
+    return chat._memory_cwd
+  end
+  return chat._memory_cwd or vim.fn.getcwd(-1, -1)
+end
+
 ---The absolute path to the memory directory
 ---@param chat? CodeCompanion.Chat
 ---@return string
 function M.get_root(chat)
-  if chat and chat._memory_root then
-    return chat._memory_root
+  if not chat then
+    return vim.fs.joinpath(vim.fn.getcwd(), M.DIR)
   end
-  return vim.fs.joinpath(vim.fn.getcwd(), M.DIR)
+  return chat._memory_root or vim.fs.joinpath(M.chat_cwd(chat), M.DIR)
+end
+
+---Fix a chat's root for the request about to be sent, and bring its index in line if the root moved
+---@param chat CodeCompanion.Chat
+---@return nil
+function M.sync_root(chat)
+  local root = vim.fs.joinpath(M.chat_cwd(chat), M.DIR)
+  if root ~= chat._memory_root then
+    chat._memory_root = root
+    M.refresh_prompt(chat)
+  end
 end
 -- /FORK(memory-cwd)
 
@@ -67,11 +104,14 @@ function M.get_prompt(chat)
   local index = M.get_index(chat)
   -- /FORK(memory-cwd)
 
+  -- FORK(memory-cwd): name the directory /memories stands for, so the model can tell when it moves
+  local where = fmt("`%s` (`%s`)", M.PREFIX, vim.fn.fnamemodify(M.get_root(chat), ":~"))
   local lines = {}
   if vim.tbl_isempty(index) then
-    table.insert(lines, fmt("Your memory directory `%s` is empty.", M.PREFIX))
+    table.insert(lines, fmt("Your memory directory %s is empty.", where))
   else
-    table.insert(lines, fmt("Below is everything in your memory directory `%s`:", M.PREFIX))
+    table.insert(lines, fmt("Below is everything in your memory directory %s:", where))
+    -- /FORK(memory-cwd)
     table.insert(lines, "")
     vim.list_extend(
       lines,
