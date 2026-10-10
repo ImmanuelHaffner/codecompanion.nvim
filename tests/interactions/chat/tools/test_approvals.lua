@@ -475,4 +475,52 @@ T["command-level approvals"]["respects an always-accepted command for a protecte
   h.eq(other_cmd, false)
 end
 
+-- FORK(memory-cwd): scopes a tool names for approval
+T["scopes"] = new_set()
+
+T["scopes"]["are approved per buffer, tool and key"] = function()
+  local res = child.lua([[
+    Approvals:always_scope(1, { tool_name = "memory", key = "/a/memories" })
+    return {
+      same = Approvals:is_scope_approved(1, { tool_name = "memory", key = "/a/memories" }),
+      other_key = Approvals:is_scope_approved(1, { tool_name = "memory", key = "/b/memories" }),
+      other_tool = Approvals:is_scope_approved(1, { tool_name = "read_file", key = "/a/memories" }),
+      other_buffer = Approvals:is_scope_approved(2, { tool_name = "memory", key = "/a/memories" }),
+    }
+  ]])
+
+  h.eq({ same = true, other_key = false, other_tool = false, other_buffer = false }, res)
+end
+
+T["scopes"]["leave the tool approvals alone"] = function()
+  local res = child.lua([[
+    Approvals:always_scope(1, { tool_name = "memory", key = "/a/memories" })
+    Approvals:always(1, { tool_name = "read_file" })
+    return {
+      tool = Approvals:is_approved(1, { tool_name = "memory" }),
+      approved = Approvals.list()[1],
+      scope_from_tool = Approvals:is_scope_approved(1, { tool_name = "read_file", key = "/a/memories" }),
+    }
+  ]])
+
+  h.eq(false, res.tool)
+  h.eq({ read_file = true }, res.approved)
+  h.eq(false, res.scope_from_tool)
+end
+
+T["scopes"]["are cleared by reset(), for that buffer only"] = function()
+  local res = child.lua([[
+    Approvals:always_scope(1, { tool_name = "memory", key = "/a/memories" })
+    Approvals:always_scope(2, { tool_name = "memory", key = "/a/memories" })
+    Approvals:reset(1)
+    return {
+      reset = Approvals:is_scope_approved(1, { tool_name = "memory", key = "/a/memories" }),
+      kept = Approvals:is_scope_approved(2, { tool_name = "memory", key = "/a/memories" }),
+    }
+  ]])
+
+  h.eq({ reset = false, kept = true }, res)
+end
+-- /FORK(memory-cwd)
+
 return T

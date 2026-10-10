@@ -361,18 +361,19 @@ return {
       -- FORK(memory-cwd): resolve against the calling chat. The runner passes the chat's tools as
       -- `self`; a caller invoking the command on the tool table itself has no chat, and gets the cwd
       local root = memory.get_root(self.chat)
-      -- A call's `cwd` points /memories at another directory's memory, for now only one below the chat's
-      -- working directory
+      -- A call's `cwd` points /memories at another directory's memory. Outside the chat's working directory it
+      -- runs only with the approval the orchestrator recorded for that directory, so a caller that skips the
+      -- orchestrator fails closed
       local resolved, cwd_err = memory.resolve_cwd(self.chat, args.cwd)
       if cwd_err then
         return output_msg("error", cwd_err)
       end
       if resolved then
-        if not resolved.inside then
+        if not resolved.inside and not (self.tool and self.tool.granted_scope == resolved.real) then
           return output_msg(
             "error",
             fmt(
-              "Memory in `%s` is outside the chat's working directory `%s`; it needs the user's approval, which this tool cannot ask for yet.",
+              "Memory in `%s` is outside the chat's working directory `%s`; it needs the user's approval, which this caller did not obtain.",
               vim.fn.fnamemodify(resolved.real, ":~"),
               vim.fn.fnamemodify(vim.fs.dirname(root), ":~")
             )
@@ -548,6 +549,21 @@ return {
   system_prompt = function(_, ctx)
     return memory.get_prompt(ctx and ctx.chat)
   end,
+  -- /FORK(memory-cwd)
+  -- FORK(memory-cwd): memory outside the chat's working directory needs the user's approval, whatever
+  -- `require_approval_before` says; an approval covers that whole memory directory
+  gates = {
+    ---@param tool CodeCompanion.Tool.Memory
+    ---@param meta { tools: CodeCompanion.Tools }
+    ---@return CodeCompanion.Tools.ForcedApproval|nil
+    forced_approval = function(tool, meta)
+      -- A bad `cwd` is the command's error to report
+      local resolved = memory.resolve_cwd(meta.tools and meta.tools.chat, tool.args and tool.args.cwd)
+      if resolved and not resolved.inside then
+        return { key = resolved.real }
+      end
+    end,
+  },
   -- /FORK(memory-cwd)
   handlers = {
     ---@param self CodeCompanion.Tool.Memory

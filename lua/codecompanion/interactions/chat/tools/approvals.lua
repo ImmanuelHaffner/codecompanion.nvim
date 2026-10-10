@@ -42,6 +42,11 @@ local approved = {}
 ---@type table<number, CodeCompanion.Tools.ApprovalMode>
 local modes = {}
 
+-- FORK(memory-cwd): scopes a tool names for approval, e.g. one memory directory, kept apart from `approved`
+---@type table<number, table<string, table<string, true>>> bufnr -> tool name -> approved key
+local scopes = {}
+-- /FORK(memory-cwd)
+
 ---@class CodeCompanion.Tools.Approvals
 local Approvals = {}
 
@@ -105,6 +110,29 @@ function Approvals:is_approved(bufnr, args)
   return approvals[args.tool_name] == true
 end
 
+-- FORK(memory-cwd): approve a scope a tool names, for the rest of the chat
+---@param bufnr number
+---@param args { tool_name: string, key: string }
+---@return nil
+function Approvals:always_scope(bufnr, args)
+  if not args or not args.tool_name or not args.key then
+    return
+  end
+  scopes[bufnr] = scopes[bufnr] or {}
+  scopes[bufnr][args.tool_name] = scopes[bufnr][args.tool_name] or {}
+  scopes[bufnr][args.tool_name][args.key] = true
+end
+
+---Has the user approved a scope a tool names, for the rest of the chat?
+---@param bufnr number
+---@param args { tool_name: string, key: string }
+---@return boolean
+function Approvals:is_scope_approved(bufnr, args)
+  local tool_scopes = args and scopes[bufnr] and scopes[bufnr][args.tool_name]
+  return tool_scopes ~= nil and tool_scopes[args.key] == true
+end
+-- /FORK(memory-cwd)
+
 ---@param bufnr number
 ---@return CodeCompanion.Tools.ApprovalMode
 function Approvals:get_mode(bufnr)
@@ -164,6 +192,9 @@ end
 function Approvals:reset(bufnr)
   approved[bufnr] = nil
   modes[bufnr] = nil
+  -- FORK(memory-cwd): approved scopes go with the rest
+  scopes[bufnr] = nil
+  -- /FORK(memory-cwd)
 end
 
 ---List all approvals

@@ -270,6 +270,21 @@ function Orchestrator:_setup_handlers()
       end
       return false
     end,
+    -- FORK(memory-cwd): a scope the tool says needs the user's approval, whatever its options. A gate that
+    -- throws asks rather than lets the call through, and leaves nothing to approve for the rest of the chat
+    ---@return CodeCompanion.Tools.ForcedApproval|nil
+    forced_approval = function()
+      if not (self.tool and self.tool.gates and self.tool.gates.forced_approval) then
+        return nil
+      end
+      local ok, forced = pcall(self.tool.gates.forced_approval, self.tool, { tools = self.tools })
+      if not ok then
+        log:error("[Orchestrator] The approval check of the `%s` tool failed: %s", self.tool.name, forced)
+        return { prompt = fmt("Run the %q tool? Its approval check failed: %s", self.tool.name, forced) }
+      end
+      return forced
+    end,
+    -- /FORK(memory-cwd)
   }
 end
 
@@ -379,6 +394,23 @@ function Orchestrator:setup_next_tool(input)
   local cmd = self.tool.cmds[1]
   log:debug("[Orchestrator::setup_next_tool] `%s` tool", self.tool.name)
 
+  -- FORK(memory-cwd): a scope the tool names must be approved whatever its options say, and only yolo skips
+  -- that. Once approved, the call goes on to the usual checks
+  self.tool.granted_scope = nil
+  local forced = self.gates.forced_approval()
+  if forced then
+    local bufnr = self.tools.bufnr
+    if
+      Approvals:get_mode(bufnr) == "yolo"
+      or (forced.key and Approvals:is_scope_approved(bufnr, { tool_name = self.tool.name, key = forced.key }))
+    then
+      self.tool.granted_scope = forced.key
+    else
+      return self:_prompt_for_approval({ cmd = cmd, input = input, forced = forced })
+    end
+  end
+  -- /FORK(memory-cwd)
+
   if
     not self.tool.opts
     or Approvals:is_approved(self.tools.bufnr, { cmd = self.output.cmd_string(), tool_name = self.tool.name })
@@ -412,14 +444,16 @@ function Orchestrator:setup_next_tool(input)
   return self:_prompt_for_approval({ cmd = cmd, input = input })
 end
 
+-- FORK(memory-cwd): a forced approval brings its scope, and may bring its own prompt
 ---Ask the user to approve the pending tool before it runs
----@param args { cmd: function, input?: any, reason?: string }
+---@param args { cmd: function, input?: any, reason?: string, forced?: CodeCompanion.Tools.ForcedApproval }
 ---@return nil
 function Orchestrator:_prompt_for_approval(args)
-  local cmd, input = args.cmd, args.input
+  local cmd, input, forced = args.cmd, args.input, args.forced
   log:debug("[Orchestrator::_prompt_for_approval] Asking for approval")
 
-  local prompt = self.output.prompt()
+  local prompt = forced and forced.prompt or self.output.prompt()
+  -- /FORK(memory-cwd)
   if prompt == nil or prompt == "" then
     prompt = ("Run the %q tool?"):format(self.tool.name)
   end
@@ -438,7 +472,16 @@ function Orchestrator:_prompt_for_approval(args)
         keymap = keys.always_accept,
         label = labels.always_accept,
         callback = function()
-          Approvals:always(self.tools.bufnr, { cmd = self.output.cmd_string(), tool_name = self.tool.name })
+          -- FORK(memory-cwd): a forced approval records its scope rather than the tool
+          if forced then
+            if forced.key then
+              Approvals:always_scope(self.tools.bufnr, { tool_name = self.tool.name, key = forced.key })
+            end
+            self.tool.granted_scope = forced.key
+          else
+            Approvals:always(self.tools.bufnr, { cmd = self.output.cmd_string(), tool_name = self.tool.name })
+          end
+          -- /FORK(memory-cwd)
           self:execute_tool({ cmd = cmd, input = input })
         end,
       },
@@ -446,6 +489,11 @@ function Orchestrator:_prompt_for_approval(args)
         keymap = keys.accept,
         label = labels.accept,
         callback = function()
+          -- FORK(memory-cwd): this call only
+          if forced then
+            self.tool.granted_scope = forced.key
+          end
+          -- /FORK(memory-cwd)
           self:execute_tool({ cmd = cmd, input = input })
         end,
       },

@@ -2106,6 +2106,30 @@ T["cwd"] = new_set({
           return builtin.cmds[1]({ chat = chat }, args)
         end
 
+        -- The chat's approval mode
+        _G.mode = function(mode)
+          -- The orchestrator keys approvals on the Tools object's buffer, which the harness sets to 1
+          require("codecompanion.interactions.chat.tools.approvals"):set_mode(tools.bufnr, { mode = mode })
+        end
+
+        -- A rejection asks for a reason; answer it rather than block the headless child
+        vim.ui.input = function(_, cb)
+          cb("rejected by the spec")
+        end
+
+        -- Answer every approval prompt with the choice labelled `label`, recording the prompts in _G.prompts
+        _G.answer = function(label)
+          _G.prompts = {}
+          require("codecompanion.interactions.chat.helpers.approval_prompt").request = function(_, opts)
+            table.insert(_G.prompts, opts.prompt)
+            for _, choice in ipairs(opts.choices) do
+              if choice.label == label then
+                return choice.callback()
+              end
+            end
+          end
+        end
+
         -- A directory below the chat's working directory, with memory of its own
         _G.SUB = vim.fs.joinpath(_G.TEST_CWD, "sub")
         vim.fn.mkdir(vim.fs.joinpath(_G.SUB, "memories"), "p")
@@ -2407,6 +2431,157 @@ T["cwd"]["the approval prompt names the physical directory of a cwd"] = function
   h.eq("View /memories/sub.md in `" .. res.sub_real .. "`?", res.sub)
   h.eq("Delete /memories/x.md in `" .. res.other_real .. "`?", res.linked)
   h.eq("View /memories?", res.own)
+end
+
+T["cwd"]["an outside cwd asks, naming its physical directory"] = function()
+  local res = child.lua([[
+    _G.mode("ask")
+    _G.answer("Accept")
+    local outside = _G.call({ command = "view", path = "/memories/other.md", cwd = _G.OTHER_CWD })
+    local inside = _G.call({ command = "view", path = "/memories/sub.md", cwd = _G.SUB })
+    return {
+      prompts = _G.prompts,
+      outside = outside,
+      inside = inside,
+      real = vim.fn.fnamemodify(vim.uv.fs_realpath(vim.fs.joinpath(_G.OTHER_CWD, "memories")), ":~"),
+    }
+  ]])
+
+  -- require_approval_before = false, yet the outside call asks; the inside one doesn't
+  h.eq({ "View /memories/other.md in `" .. res.real .. "`?" }, res.prompts)
+  h.expect_contains("in other", res.outside)
+  h.expect_contains("in sub", res.inside)
+end
+
+T["cwd"]["Accept approves one outside call"] = function()
+  local res = child.lua([[
+    _G.mode("ask")
+    _G.answer("Accept")
+    local first = _G.call({ command = "view", path = "/memories/other.md", cwd = _G.OTHER_CWD })
+    local second = _G.call({ command = "view", path = "/memories/other.md", cwd = _G.OTHER_CWD })
+    return { prompts = #_G.prompts, first = first, second = second }
+  ]])
+
+  h.eq(2, res.prompts)
+  h.expect_contains("in other", res.first)
+  h.expect_contains("in other", res.second)
+end
+
+T["cwd"]["Always accept approves the whole outside directory"] = function()
+  local res = child.lua([[
+    _G.mode("ask")
+    _G.answer("Always accept")
+    local other = _G.OTHER_CWD
+    _G.call({ command = "view", path = "/memories/other.md", cwd = other })
+    _G.call({ command = "create", path = "/memories/new.md", file_text = "old", cwd = other })
+    _G.call({ command = "str_replace", path = "/memories/new.md", old_str = "old", new_str = "new", cwd = other })
+    local after_one_directory = #_G.prompts
+
+    _G.THIRD_CWD = vim.fn.tempname()
+    vim.fn.mkdir(vim.fs.joinpath(_G.THIRD_CWD, "memories"), "p")
+    _G.call({ command = "view", path = "/memories", cwd = _G.THIRD_CWD })
+    local after_another = #_G.prompts
+    pcall(vim.fn.delete, _G.THIRD_CWD, "rf")
+
+    local Approvals = require("codecompanion.interactions.chat.tools.approvals")
+    return {
+      after_one_directory = after_one_directory,
+      after_another = after_another,
+      written = vim.fn.readfile(vim.fs.joinpath(other, "memories", "new.md")),
+      tool_approved = Approvals:is_approved(tools.bufnr, { tool_name = "memory" }),
+    }
+  ]])
+
+  h.eq(1, res.after_one_directory)
+  h.eq(2, res.after_another)
+  h.eq({ "new" }, res.written)
+  -- The directory was approved, not the tool
+  h.eq(false, res.tool_approved)
+end
+
+T["cwd"]["auto mode asks the user about an outside cwd"] = function()
+  local res = child.lua([[
+    _G.mode("auto")
+    _G.answer("Accept")
+    local outside = _G.call({ command = "view", path = "/memories/other.md", cwd = _G.OTHER_CWD })
+    local inside = _G.call({ command = "view", path = "/memories/sub.md", cwd = _G.SUB })
+    return { prompts = #_G.prompts, outside = outside, inside = inside }
+  ]])
+
+  h.eq(1, res.prompts)
+  h.expect_contains("in other", res.outside)
+  h.expect_contains("in sub", res.inside)
+end
+
+T["cwd"]["yolo mode lets an outside cwd through"] = function()
+  local res = child.lua([[
+    _G.mode("yolo")
+    _G.answer("Reject")
+    local outside = _G.call({ command = "view", path = "/memories/other.md", cwd = _G.OTHER_CWD })
+    return { prompts = #_G.prompts, outside = outside }
+  ]])
+
+  h.eq(0, res.prompts)
+  h.expect_contains("in other", res.outside)
+end
+
+T["cwd"]["Reject keeps an outside call out"] = function()
+  local res = child.lua([[
+    _G.mode("ask")
+    vim.ui.input = function(_, cb)
+      cb("not that directory")
+    end
+    _G.answer("Reject")
+    local output = _G.call({ command = "create", path = "/memories/rejected.md", file_text = "x", cwd = _G.OTHER_CWD })
+    return {
+      output = output,
+      created = vim.uv.fs_stat(vim.fs.joinpath(_G.OTHER_CWD, "memories", "rejected.md")) ~= nil,
+    }
+  ]])
+
+  h.expect_contains("not that directory", res.output)
+  h.eq(false, res.created)
+end
+
+T["cwd"]["an outside cwd fails closed without the orchestrator's approval"] = function()
+  local res = child.lua([[
+    local builtin = require("codecompanion.interactions.chat.tools.builtin.memory")
+    local args = { command = "view", path = "/memories/other.md", cwd = _G.OTHER_CWD }
+    local real = vim.uv.fs_realpath(vim.fs.joinpath(_G.OTHER_CWD, "memories"))
+    return {
+      none = _G.run(args),
+      other = builtin.cmds[1]({ chat = chat, tool = { granted_scope = "/elsewhere/memories" } }, args),
+      granted = builtin.cmds[1]({ chat = chat, tool = { granted_scope = real } }, args),
+    }
+  ]])
+
+  h.eq("error", res.none.status)
+  h.expect_contains("which this caller did not obtain", res.none.data)
+  h.eq("error", res.other.status)
+  h.eq("in other\n", res.granted.data)
+end
+
+T["cwd"]["an approval check that throws asks, and approves nothing beyond the call"] = function()
+  local res = child.lua([[
+    require("codecompanion.interactions.chat.tools.builtin.memory").gates.forced_approval = function()
+      error("boom")
+    end
+    _G.mode("ask")
+    _G.answer("Always accept")
+    local first = _G.call({ command = "view", path = "/memories/sub.md", cwd = _G.SUB })
+    _G.call({ command = "view", path = "/memories/sub.md", cwd = _G.SUB })
+    local prompts = vim.deepcopy(_G.prompts)
+
+    -- With no scope recorded, an outside call still fails closed
+    local outside = _G.call({ command = "view", path = "/memories/other.md", cwd = _G.OTHER_CWD })
+    return { prompts = prompts, first = first, outside = outside }
+  ]])
+
+  h.eq(2, #res.prompts)
+  h.expect_contains("approval check failed", res.prompts[1])
+  h.expect_contains("boom", res.prompts[1])
+  h.expect_contains("in sub", res.first)
+  h.expect_contains("which this caller did not obtain", res.outside)
 end
 -- /FORK(memory-cwd)
 

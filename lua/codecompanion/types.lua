@@ -208,6 +208,16 @@
 ---@field args table The arguments sent over by the LLM when making the request
 ---@field tool table The tool configuration from the config file
 
+-- FORK(memory-cwd): a scope the tool says needs the user's approval, whatever its options
+---@class CodeCompanion.Tools.Tool
+---@field gates.forced_approval? fun(self: CodeCompanion.Tools.Tool, meta: table): CodeCompanion.Tools.ForcedApproval|nil A scope this call needs the user's approval for, whatever the tool's options and the approval mode, yolo excepted
+---@field granted_scope? string The scope the orchestrator approved for this call, set before it runs
+
+---@class CodeCompanion.Tools.ForcedApproval
+---@field key? string What an approval covers, and what *Always accept* records for the chat; nil approves this call only
+---@field prompt? string The approval prompt, instead of the tool's `output.prompt`
+-- /FORK(memory-cwd)
+
 ---@class CodeCompanion.SlashCommand.Provider
 ---@field output function The function to call when a selection is made
 ---@field provider table The path to the provider
