@@ -385,7 +385,10 @@ return {
 
             -- Now we can iterate over the content blocks
             if type(m.content) == "table" and vim.islist(m.content) then
-              local consolidated = {}
+              -- FORK(vision): the API rejects a user turn unless its tool_result blocks come first. A tool
+              -- that returns an image adds it straight after its own result, so with parallel calls the
+              -- image would land between two results; move every other block behind the results.
+              local consolidated, rest = {}, {}
               for _, block in ipairs(m.content) do
                 if block.type == "tool_result" then
                   local prev = consolidated[#consolidated]
@@ -396,9 +399,11 @@ return {
                     table.insert(consolidated, block)
                   end
                 else
-                  table.insert(consolidated, block)
+                  table.insert(rest, block)
                 end
               end
+              vim.list_extend(consolidated, rest)
+              -- /FORK(vision)
               m.content = consolidated
             end
           end

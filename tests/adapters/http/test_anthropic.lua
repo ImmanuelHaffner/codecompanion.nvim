@@ -352,6 +352,44 @@ T["Anthropic adapter"]["form_messages"]["with tools and consecutive tool results
   h.eq({ cache_control = { type = "ephemeral" }, messages = output }, adapter.handlers.form_messages(adapter, input))
 end
 
+-- FORK(vision): a tool's image must not split the results of parallel tool calls
+T["Anthropic adapter"]["form_messages"]["keeps tool results ahead of an image a tool returned"] = function()
+  local messages = {
+    { role = "user", content = "Look at the screenshot and check the weather" },
+    {
+      role = "assistant",
+      content = "Calling both.",
+      tools = {
+        calls = {
+          { id = "call_1", ["function"] = { name = "view_image", arguments = "{}" } },
+          { id = "call_2", ["function"] = { name = "weather", arguments = "{}" } },
+        },
+      },
+    },
+    { role = "tool", content = "1 image returned", tools = { call_id = "call_1" } },
+    {
+      role = "user",
+      content = "somefakebase64encoding",
+      context = { id = "<image>shot.png</image>", mimetype = "image/png" },
+      _meta = { tag = tags.IMAGE },
+      opts = { visible = false },
+    },
+    { role = "tool", content = "Sunny", tools = { call_id = "call_2" } },
+  }
+
+  local turn = adapter.handlers.form_messages(adapter, messages).messages[3]
+
+  h.eq("user", turn.role)
+  h.eq(
+    { "tool_result", "tool_result", "image" },
+    vim.tbl_map(function(block)
+      return block.type
+    end, turn.content)
+  )
+  h.eq({ "call_1", "call_2" }, { turn.content[1].tool_use_id, turn.content[2].tool_use_id })
+end
+-- /FORK(vision)
+
 T["Anthropic adapter"]["form_messages"]["handles tool results correctly"] = function()
   local messages = {
     {
