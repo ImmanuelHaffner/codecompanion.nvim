@@ -109,4 +109,49 @@ T["Folds"]["cleanup drops deferred folds"] = function()
   h.eq(true, result.drained)
 end
 
+T["Folds"]["recreating a fold fires no ModeChanged for a user in Insert mode"] = function()
+  local result = child.lua_get([[(function()
+    local bufnr = _G.scratch()
+    folds:setup(_G.display(bufnr))
+    folds:create_tool_fold(bufnr, 1, 5, 'Tool output')
+
+    -- Registered before entering Insert mode: Neovim tracks the last reported mode only while a
+    -- ModeChanged autocmd exists, and would otherwise not see the flip back to Normal as a change
+    local counting, changes = false, 0
+    local au = vim.api.nvim_create_autocmd('ModeChanged', {
+      callback = function()
+        if counting then
+          changes = changes + 1
+        end
+      end,
+    })
+
+    -- The tool finishes while the user types in another window
+    local other = vim.api.nvim_create_buf(false, true)
+    local float = vim.api.nvim_open_win(other, true, { relative = 'editor', row = 0, col = 0, width = 20, height = 1 })
+    local mode
+    vim.keymap.set('i', '<Plug>(recreate)', function()
+      mode, counting = vim.api.nvim_get_mode().mode, true
+      folds:recreate(bufnr, 1, 5, { type = 'tool', content = 'Tool output' })
+      counting = false
+    end, { buffer = other })
+    vim.api.nvim_feedkeys(vim.keycode('i<Plug>(recreate)<Esc>'), 'mx', false)
+    vim.api.nvim_del_autocmd(au)
+    vim.api.nvim_win_close(float, true)
+
+    local winnr = vim.fn.bufwinid(bufnr)
+    return {
+      mode = mode,
+      changes = changes,
+      foldclosed = vim.api.nvim_win_call(winnr, function()
+        return vim.fn.foldclosed(3)
+      end),
+    }
+  end)()]])
+
+  h.eq("i", result.mode)
+  h.eq(0, result.changes)
+  h.eq(2, result.foldclosed)
+end
+
 return T

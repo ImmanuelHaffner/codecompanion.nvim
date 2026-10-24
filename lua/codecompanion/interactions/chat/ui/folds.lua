@@ -145,20 +145,27 @@ function Folds:_delete(bufnr, line)
     api.nvim_buf_call(bufnr, function()
       local lnum = line + 1
 
+      -- FORK(fold-modechanged): run from Insert mode, as when a tool finishes while the user types in another
+      -- window, every `:normal` flips the mode to Normal and back. Each flip fires ModeChanged, and listeners
+      -- that redraw on it stalled the editor on long chats.
+      local function normal(keys)
+        vim.cmd("noautocmd normal! " .. keys)
+      end
+      -- /FORK(fold-modechanged)
+
       -- Ensure outer folds are open so we don't target a parent fold
       vim.fn.cursor(lnum, 1)
-      vim.cmd("normal! zv")
+      normal("zv")
 
       -- If the target fold is open, close just that fold at its start
       if vim.fn.foldclosed(lnum) == -1 then
-        vim.cmd("normal! zc")
+        normal("zc")
       end
 
       -- Now delete exactly one fold at this line (if present)
       if vim.fn.foldclosed(lnum) ~= -1 then
-        vim.cmd("normal! zd")
+        normal("zd")
       end
-
       -- Keep our summaries in sync
       if Folds.fold_summaries[bufnr] then
         Folds.fold_summaries[bufnr][line] = nil
