@@ -105,6 +105,9 @@
 ---@field tools.call_id? string Tool call ID
 ---@field tools.calls? CodeCompanion.Chat.ToolCall[] Array of tool calls
 ---@field tools.id? string Tool ID
+-- FORK(vision): images a tool returned, sent nested in its result by adapters with `opts.tool_result_images`
+---@field tools.images? CodeCompanion.Image[]
+-- /FORK(vision)
 ---@field opts? table Optional metadata used by the UI and processing
 ---@field opts.sync_all? boolean When synced, whether the entire buffer is shared
 ---@field opts.sync_diff? boolean When synced, whether only buffer diffs are shared

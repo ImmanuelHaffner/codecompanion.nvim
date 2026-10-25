@@ -939,6 +939,84 @@ T["Chat"]["on_tool_output callback receives correct args"] = function()
   h.eq(result.message_content, "Modified: LLM output")
 end
 
+-- FORK(vision): images a tool returned travel on its message
+local function add_image_output(text, name)
+  return string.format(
+    [[
+    _G.chat:add_tool_output({
+      name = "view_image",
+      function_call = { id = "call_img", type = "function", ["function"] = { name = "view_image", arguments = "{}" } },
+    }, %q, "", { images = { { id = %q, base64 = "x", mimetype = "image/png", dimensions = { width = 2560, height = 1080 } } } })
+  ]],
+    text,
+    name
+  )
+end
+
+T["Chat"]["add_tool_output keeps a tool's images on its message"] = function()
+  local result = child.lua(add_image_output("ok", "a.png") .. [[
+    local msg = _G.chat.messages[#_G.chat.messages]
+    return { images = msg.tools.images, call_id = msg.tools.call_id, estimate = msg._meta.estimated_tokens }
+  ]])
+
+  h.eq("call_img", result.call_id)
+  h.eq(
+    { { id = "a.png", base64 = "x", mimetype = "image/png", dimensions = { width = 2560, height = 1080 } } },
+    result.images
+  )
+  h.eq(1 + 3588, result.estimate)
+end
+
+T["Chat"]["add_tool_output appends the images of a merged output"] = function()
+  local result = child.lua(add_image_output("first", "a.png") .. add_image_output("second", "b.png") .. [[
+    local msg = _G.chat.messages[#_G.chat.messages]
+    return {
+      ids = vim.tbl_map(function(image) return image.id end, msg.tools.images),
+      estimate = msg._meta.estimated_tokens,
+      content = msg.content,
+    }
+  ]])
+
+  h.eq({ "a.png", "b.png" }, result.ids)
+  h.eq("first\n\nsecond", result.content)
+  h.eq(
+    child.lua([[return require("codecompanion.utils.tokens").calculate("first\n\nsecond")]]) + 2 * 3588,
+    result.estimate
+  )
+end
+
+T["Chat"]["adapters other than Anthropic ignore a tool's images"] = function()
+  local result = child.lua([[
+    local adapters = require("codecompanion.adapters")
+    local messages = {
+      { role = "user", content = "What is in shot.png?" },
+      {
+        role = "llm",
+        content = "",
+        tools = { calls = { { id = "c1", type = "function", ["function"] = { name = "view_image", arguments = "{}" } } } },
+      },
+      { role = "tool", content = "1 image returned", tools = { call_id = "c1" } },
+    }
+    local with_images = vim.deepcopy(messages)
+    with_images[3].tools.images = { { base64 = "x", mimetype = "image/png" } }
+
+    local openai = adapters.resolve("openai")
+    return {
+      openai_flag = openai.opts.tool_result_images,
+      copilot_flag = adapters.resolve("copilot").opts.tool_result_images,
+      same = vim.deep_equal(
+        openai.handlers.form_messages(openai, vim.deepcopy(messages)),
+        openai.handlers.form_messages(openai, with_images)
+      ),
+    }
+  ]])
+
+  h.eq(nil, result.openai_flag)
+  h.eq(nil, result.copilot_flag)
+  h.eq(true, result.same)
+end
+-- /FORK(vision)
+
 local function start_turn()
   child.lua([[chat._is_turn_active = true]])
 end

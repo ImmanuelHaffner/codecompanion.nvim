@@ -173,6 +173,21 @@ T["Utils"]["get_tokens()"]["counts a compacted image as its placeholder"] = func
 end
 -- /FORK(vision)
 
+-- FORK(vision): images nested in a tool result count too
+T["Utils"]["get_tokens()"]["counts the images nested in a tool result"] = function()
+  local result = child.lua([[
+    return tokens.get_tokens({
+      {
+        role = "tool",
+        content = "test",
+        tools = { call_id = "c1", images = { { base64 = "x", dimensions = { width = 2560, height = 1080 } } } },
+      },
+    }, { message_overhead = 0 })
+  ]])
+  h.eq(1 + 3588, result)
+end
+-- /FORK(vision)
+
 T["Utils"]["benchmark()"] = MiniTest.new_set()
 
 T["Utils"]["benchmark()"]["calculate() throughput metrics"] = function()

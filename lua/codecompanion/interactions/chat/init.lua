@@ -1942,8 +1942,11 @@ end
 ---@param tool table The Tool that was executed
 ---@param for_llm string The output to share with the LLM
 ---@param for_user? string The output to share with the user. If empty will use the LLM's output
+-- FORK(vision): images a tool returns, kept on its message for adapters that nest them in the result
+---@param opts? { images?: CodeCompanion.Image[] }
+-- /FORK(vision)
 ---@return nil
-function Chat:add_tool_output(tool, for_llm, for_user)
+function Chat:add_tool_output(tool, for_llm, for_user, opts)
   local tool_call = tool.function_call
   log:debug("Tool output: %s", tool_call)
 
@@ -1979,9 +1982,16 @@ function Chat:add_tool_output(tool, for_llm, for_user)
 
   -- Truncate after merging so that a tool emitting many small chunks is caught too
   output.content = context_helpers.truncate_tool_output({ adapter = self.adapter, content = output.content })
+  -- FORK(vision): a merged output keeps the images of every part
+  local images = opts and opts.images
+  if images and #images > 0 then
+    output.tools = output.tools or {}
+    output.tools.images = vim.list_extend(output.tools.images or {}, images)
+  end
   output._meta = vim.tbl_extend("force", output._meta or {}, {
-    estimated_tokens = tokens.calculate(output.content),
+    estimated_tokens = tokens.calculate(output.content) + tokens.images_tokens(output.tools and output.tools.images),
   })
+  -- /FORK(vision)
 
   -- Allow tools to pass in an empty string to not write any output to the buffer
   if for_user ~= "" then

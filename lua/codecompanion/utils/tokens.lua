@@ -120,6 +120,17 @@ function M.image_tokens(dimensions)
   return math.min(math.ceil(dimensions.width / 28) * math.ceil(dimensions.height / 28), M.MAX_IMAGE_TOKENS)
 end
 
+---Estimate the visual tokens of the images a tool returned with its result
+---@param images? CodeCompanion.Image[]
+---@return number
+function M.images_tokens(images)
+  local total = 0
+  for _, image in ipairs(images or {}) do
+    total = total + M.image_tokens(image.dimensions)
+  end
+  return total
+end
+
 ---Whether a message still carries an image. Compaction keeps the tag but swaps the payload for a placeholder and
 ---drops the context, and that placeholder is counted as text
 ---@param message table
@@ -143,11 +154,14 @@ function M.get_tokens(messages, opts)
   local tokens = 0
   for _, message in ipairs(messages or {}) do
     local content = type(message) == "table" and message.content or message
-    -- FORK(vision): an image counts by its visual tokens
+    -- FORK(vision): an image counts by its visual tokens, and so do the images nested in a tool result
     if type(message) == "table" and carries_image(message) then
       tokens = tokens + M.image_tokens(message.context.dimensions) + message_overhead
     elseif type(content) == "string" and content ~= "" then
       tokens = tokens + M.calculate(content, opts) + message_overhead
+    end
+    if type(message) == "table" and message.tools and message.tools.images then
+      tokens = tokens + M.images_tokens(message.tools.images)
     end
     -- /FORK(vision)
   end

@@ -307,6 +307,30 @@ T["Editing"]["updates estimated_tokens when content is replaced"] = function()
   h.not_eq(9999, messages[2]._meta.estimated_tokens)
 end
 
+-- FORK(vision): images nested in a tool result go with it
+T["Editing"]["clears the images nested in an aged tool result"] = function()
+  local messages = {
+    {
+      role = "llm",
+      content = "",
+      _meta = { cycle = 1, id = 3 },
+      opts = { visible = false },
+      tools = { calls = { { id = "c1", type = "function", ["function"] = { name = "view_image", arguments = "{}" } } } },
+    },
+    {
+      role = "tool",
+      content = "1 image returned",
+      _meta = { cycle = 1, id = 10 },
+      opts = { visible = true },
+      tools = { call_id = "c1", images = { { base64 = "x", mimetype = "image/png" } } },
+    },
+  }
+  Editing.apply(messages, { current_cycle = 8, keep_cycles = 3 })
+  h.eq(Editing.PLACEHOLDERS.tool_result, messages[2].content)
+  h.eq(nil, messages[2].tools.images)
+end
+-- /FORK(vision)
+
 T["Editing.integration"] = MiniTest.new_set({
   hooks = {
     pre_case = function()

@@ -5,6 +5,36 @@ local log = require("codecompanion.utils.log")
 local tags = require("codecompanion.interactions.shared.tags")
 local tool_transformer = require("codecompanion.adapters.utils.tool_transformers")
 
+-- FORK(vision): images a tool returned travel inside its tool_result
+---A tool result's content as a fresh list of blocks, so results carrying images can be merged
+---@param content? string|table
+---@return table
+local function as_blocks(content)
+  if type(content) == "table" then
+    return vim.list_extend({}, content)
+  end
+  if content == nil or content == "" then
+    return {}
+  end
+  return { { type = "text", text = content } }
+end
+
+---A tool result's content: its text, then one image block per image
+---@param text string|table
+---@param images CodeCompanion.Image[]
+---@return table
+local function with_images(text, images)
+  local blocks = as_blocks(text)
+  for _, image in ipairs(images) do
+    table.insert(blocks, {
+      type = "image",
+      source = { type = "base64", media_type = image.mimetype, data = image.base64 },
+    })
+  end
+  return blocks
+end
+-- /FORK(vision)
+
 local models_source = {
   name = "Anthropic",
   url = "https://api.anthropic.com/v1/models",
@@ -34,6 +64,9 @@ return {
     stream = true,
     tools = true,
     vision = true,
+    -- FORK(vision): tool results may carry images, see form_messages
+    tool_result_images = true,
+    -- /FORK(vision)
   },
   url = "https://api.anthropic.com/v1/messages",
   env = {
@@ -305,14 +338,20 @@ return {
               m.content = { m.content }
             else
               -- Convert from the canonical tool-result shape to Anthropic's format
+              -- FORK(vision): nest the images the tool returned; a model without vision gets the text alone
+              local content = m.content
+              if m.tools.images and #m.tools.images > 0 and self.opts and self.opts.vision then
+                content = with_images(m.content, m.tools.images)
+              end
               m.content = {
                 {
                   type = "tool_result",
                   tool_use_id = m.tools.call_id,
-                  content = m.content,
+                  content = content,
                   is_error = m.tools.is_error or false,
                 },
               }
+              -- /FORK(vision)
             end
             m.tools = nil
           end
@@ -394,7 +433,11 @@ return {
                   local prev = consolidated[#consolidated]
                   if prev and prev.type == "tool_result" and prev.tool_use_id == block.tool_use_id then
                     -- Merge consecutive tool results with the same tool_use_id
-                    prev.content = prev.content .. block.content
+                    if type(prev.content) == "string" and type(block.content) == "string" then
+                      prev.content = prev.content .. block.content
+                    else
+                      prev.content = vim.list_extend(as_blocks(prev.content), as_blocks(block.content))
+                    end
                   else
                     table.insert(consolidated, block)
                   end

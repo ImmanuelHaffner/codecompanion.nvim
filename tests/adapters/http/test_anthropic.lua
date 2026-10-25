@@ -390,6 +390,118 @@ T["Anthropic adapter"]["form_messages"]["keeps tool results ahead of an image a 
 end
 -- /FORK(vision)
 
+-- FORK(vision): images a tool returned travel inside its tool_result
+local function image(name)
+  return { id = name, base64 = "base64-of-" .. name, mimetype = "image/png" }
+end
+
+local function calls(...)
+  local list = {}
+  for _, id in ipairs({ ... }) do
+    table.insert(list, { id = id, ["function"] = { name = "view_image", arguments = "{}" } })
+  end
+  return { role = "assistant", content = "Looking.", tools = { calls = list } }
+end
+
+local function image_block(name)
+  return { type = "image", source = { type = "base64", media_type = "image/png", data = "base64-of-" .. name } }
+end
+
+T["Anthropic adapter"]["form_messages"]["nests a tool's images in its tool_result"] = function()
+  local messages = {
+    { role = "user", content = "What is in shot.png?" },
+    calls("call_1"),
+    { role = "tool", content = "1 image returned", tools = { call_id = "call_1", images = { image("shot.png") } } },
+  }
+
+  local turn = adapter.handlers.form_messages(adapter, messages).messages[3]
+
+  h.eq("user", turn.role)
+  h.eq(1, #turn.content)
+  h.eq("tool_result", turn.content[1].type)
+  h.eq({ { type = "text", text = "1 image returned" }, image_block("shot.png") }, turn.content[1].content)
+end
+
+T["Anthropic adapter"]["form_messages"]["leaves out an empty text block beside the images"] = function()
+  local messages = {
+    { role = "user", content = "What is in shot.png?" },
+    calls("call_1"),
+    { role = "tool", content = "", tools = { call_id = "call_1", images = { image("shot.png") } } },
+  }
+
+  local turn = adapter.handlers.form_messages(adapter, messages).messages[3]
+
+  h.eq({ image_block("shot.png") }, turn.content[1].content)
+end
+
+T["Anthropic adapter"]["form_messages"]["drops a tool's images without vision"] = function()
+  adapter.opts.vision = false
+  local messages = {
+    { role = "user", content = "What is in shot.png?" },
+    calls("call_1"),
+    { role = "tool", content = "1 image returned", tools = { call_id = "call_1", images = { image("shot.png") } } },
+  }
+
+  local turn = adapter.handlers.form_messages(adapter, messages).messages[3]
+
+  h.eq("1 image returned", turn.content[1].content)
+end
+
+T["Anthropic adapter"]["form_messages"]["merges results for one call when one carries images"] = function()
+  local messages = {
+    { role = "user", content = "What is in shot.png?" },
+    calls("call_1"),
+    { role = "tool", content = "first", tools = { call_id = "call_1", images = { image("shot.png") } } },
+    { role = "tool", content = "second", tools = { call_id = "call_1" } },
+  }
+
+  local turn = adapter.handlers.form_messages(adapter, messages).messages[3]
+
+  h.eq(1, #turn.content)
+  h.eq({
+    { type = "text", text = "first" },
+    image_block("shot.png"),
+    { type = "text", text = "second" },
+  }, turn.content[1].content)
+end
+
+T["Anthropic adapter"]["form_messages"]["nests each parallel call's images in its own result"] = function()
+  local messages = {
+    { role = "user", content = "Compare a.png and b.png" },
+    calls("call_1", "call_2"),
+    { role = "tool", content = "a", tools = { call_id = "call_1", images = { image("a.png") } } },
+    { role = "tool", content = "b", tools = { call_id = "call_2", images = { image("b.png") } } },
+  }
+
+  local turn = adapter.handlers.form_messages(adapter, messages).messages[3]
+
+  h.eq(2, #turn.content)
+  h.eq({ "tool_result", "tool_result" }, { turn.content[1].type, turn.content[2].type })
+  h.eq({ { type = "text", text = "a" }, image_block("a.png") }, turn.content[1].content)
+  h.eq({ { type = "text", text = "b" }, image_block("b.png") }, turn.content[2].content)
+end
+
+T["Anthropic adapter"]["form_messages"]["leaves the caller's images untouched"] = function()
+  local messages = {
+    { role = "user", content = "What is in shot.png?" },
+    calls("call_1"),
+    { role = "tool", content = "first", tools = { call_id = "call_1", images = { image("shot.png") } } },
+    { role = "tool", content = "second", tools = { call_id = "call_1" } },
+  }
+  local images = messages[3].tools.images
+
+  adapter.handlers.form_messages(adapter, messages)
+
+  h.eq({ image("shot.png") }, images)
+end
+
+T["Anthropic adapter"]["declares tool_result_images, and adapters extending it inherit it"] = function()
+  h.eq(true, adapter.opts.tool_result_images)
+  local extended = require("codecompanion.adapters").extend("anthropic", { name = "anthropic_gateway" })
+  h.eq(true, extended.opts.tool_result_images)
+end
+-- /FORK(vision)
+
 T["Anthropic adapter"]["form_messages"]["handles tool results correctly"] = function()
   local messages = {
     {

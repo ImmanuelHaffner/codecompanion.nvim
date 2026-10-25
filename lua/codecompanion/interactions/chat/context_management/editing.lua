@@ -76,6 +76,9 @@ local function tool_results(messages, opts)
       if not already_edited and not excluded and cycle and cycle <= cutoff then
         msg.content = placeholder
         msg._meta.estimated_tokens = tokens.calculate(placeholder)
+        -- FORK(vision): the images go with the result they belong to
+        msg.tools.images = nil
+        -- /FORK(vision)
         msg._meta.context_management = msg._meta.context_management or {}
         msg._meta.context_management.edited = true
         cleared = cleared + 1
