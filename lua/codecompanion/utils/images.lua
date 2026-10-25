@@ -11,6 +11,9 @@ local ui_utils = require("codecompanion.utils.ui")
 ---@field bufnr? number
 ---@field base64? string
 ---@field mimetype? string
+-- FORK(vision): known by callers that read the header, e.g. MCPHub's view_image
+---@field dimensions? { width: integer, height: integer }
+-- /FORK(vision)
 
 ---Base64 encode the given image and generate the corresponding mimetype
 ---@param image CodeCompanion.Image The image object containing the path and other metadata.

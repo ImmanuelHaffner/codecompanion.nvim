@@ -1059,6 +1059,15 @@ function Chat:add_message(data, opts)
     opts.visible = true
   end
 
+  -- FORK(vision): an image counts by its visual tokens, and its base64 is not worth scanning
+  local estimated_tokens
+  if opts._meta and opts._meta.tag == tags.IMAGE then
+    estimated_tokens = tokens.image_tokens(opts.context and opts.context.dimensions)
+  elseif type(data.content) == "string" then
+    estimated_tokens = tokens.calculate(data.content)
+  end
+  -- /FORK(vision)
+
   ---@type CodeCompanion.Chat.Message
   local message = {
     role = data.role,
@@ -1067,7 +1076,9 @@ function Chat:add_message(data, opts)
     _meta = {
       id = 1,
       cycle = self.cycle,
-      estimated_tokens = type(data.content) == "string" and tokens.calculate(data.content) or nil,
+      -- FORK(vision): estimated above
+      estimated_tokens = estimated_tokens,
+      -- /FORK(vision)
     },
   }
 
@@ -1179,7 +1190,9 @@ function Chat:add_image_message(image, opts)
     role = opts.role,
     content = image.base64,
   }, {
-    context = { id = id, mimetype = image.mimetype, path = image.path or image.id },
+    -- FORK(vision): a caller that knows the image's size gets the exact estimate
+    context = { id = id, mimetype = image.mimetype, path = image.path or image.id, dimensions = image.dimensions },
+    -- /FORK(vision)
     _meta = { tag = tags.IMAGE },
     visible = false,
   })

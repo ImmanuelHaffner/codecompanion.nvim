@@ -1,5 +1,9 @@
 local api = vim.api
 
+-- FORK(vision): images are counted by their pixels, not by the length of their base64
+local tags = require("codecompanion.interactions.shared.tags")
+-- /FORK(vision)
+
 local M = {}
 
 local DEFAULTS = {
@@ -101,6 +105,31 @@ function M.calculate(message, opts)
   return tokens
 end
 
+-- FORK(vision): images are counted by their pixels, not by the length of their base64
+---The most visual tokens any image costs, the high-resolution tier's ceiling, so an image of unknown size is never
+---underestimated
+M.MAX_IMAGE_TOKENS = 4784
+
+---Estimate an image's visual tokens: one per 28x28 pixel patch, up to the ceiling
+---@param dimensions? { width: integer, height: integer }
+---@return number
+function M.image_tokens(dimensions)
+  if not (dimensions and dimensions.width and dimensions.height) then
+    return M.MAX_IMAGE_TOKENS
+  end
+  return math.min(math.ceil(dimensions.width / 28) * math.ceil(dimensions.height / 28), M.MAX_IMAGE_TOKENS)
+end
+
+---Whether a message still carries an image. Compaction keeps the tag but swaps the payload for a placeholder and
+---drops the context, and that placeholder is counted as text
+---@param message table
+---@return boolean
+local function carries_image(message)
+  local meta, context = message._meta, message.context
+  return meta ~= nil and meta.tag == tags.IMAGE and context ~= nil and context.mimetype ~= nil
+end
+-- /FORK(vision)
+
 ---Get the total number of tokens in a list of messages.
 ---@param messages table
 ---@param opts? table
@@ -114,9 +143,13 @@ function M.get_tokens(messages, opts)
   local tokens = 0
   for _, message in ipairs(messages or {}) do
     local content = type(message) == "table" and message.content or message
-    if type(content) == "string" and content ~= "" then
+    -- FORK(vision): an image counts by its visual tokens
+    if type(message) == "table" and carries_image(message) then
+      tokens = tokens + M.image_tokens(message.context.dimensions) + message_overhead
+    elseif type(content) == "string" and content ~= "" then
       tokens = tokens + M.calculate(content, opts) + message_overhead
     end
+    -- /FORK(vision)
   end
 
   return tokens

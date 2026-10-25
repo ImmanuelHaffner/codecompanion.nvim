@@ -121,6 +121,58 @@ T["Utils"]["get_tokens()"]["applies message overhead per counted message"] = fun
   h.eq(8, result)
 end
 
+-- FORK(vision): images are counted by their visual tokens
+T["Utils"]["image_tokens()"] = MiniTest.new_set()
+
+T["Utils"]["image_tokens()"]["counts 28x28 patches"] = function()
+  h.eq(3588, child.lua([[return tokens.image_tokens({ width = 2560, height = 1080 })]]))
+  h.eq(64, child.lua([[return tokens.image_tokens({ width = 200, height = 200 })]]))
+end
+
+T["Utils"]["image_tokens()"]["caps at the ceiling"] = function()
+  h.eq(4784, child.lua([[return tokens.image_tokens({ width = 8000, height = 8000 })]]))
+end
+
+T["Utils"]["image_tokens()"]["assumes the ceiling without dimensions"] = function()
+  h.eq(4784, child.lua([[return tokens.image_tokens(nil)]]))
+  h.eq(4784, child.lua([[return tokens.MAX_IMAGE_TOKENS]]))
+end
+
+T["Utils"]["get_tokens()"]["counts an image by its visual tokens"] = function()
+  local result = child.lua([[
+    local tag = require("codecompanion.interactions.shared.tags").IMAGE
+    return tokens.get_tokens({
+      { role = "user", content = "test" },
+      { role = "user", content = string.rep("A", 430096), _meta = { tag = tag }, context = { mimetype = "image/png" } },
+    }, { message_overhead = 3 })
+  ]])
+  h.eq(1 + 3 + 4784 + 3, result)
+end
+
+T["Utils"]["get_tokens()"]["counts an image by its dimensions when known"] = function()
+  local result = child.lua([[
+    local tag = require("codecompanion.interactions.shared.tags").IMAGE
+    return tokens.get_tokens({
+      {
+        role = "user",
+        content = string.rep("A", 1000),
+        _meta = { tag = tag },
+        context = { mimetype = "image/png", dimensions = { width = 200, height = 200 } },
+      },
+    }, { message_overhead = 0 })
+  ]])
+  h.eq(64, result)
+end
+
+T["Utils"]["get_tokens()"]["counts a compacted image as its placeholder"] = function()
+  local result = child.lua([[
+    local tag = require("codecompanion.interactions.shared.tags").IMAGE
+    return tokens.get_tokens({ { role = "user", content = "test", _meta = { tag = tag } } }, { message_overhead = 0 })
+  ]])
+  h.eq(1, result)
+end
+-- /FORK(vision)
+
 T["Utils"]["benchmark()"] = MiniTest.new_set()
 
 T["Utils"]["benchmark()"]["calculate() throughput metrics"] = function()

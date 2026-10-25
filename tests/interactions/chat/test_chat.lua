@@ -287,6 +287,51 @@ T["Chat"]["an image is attached however the link is labelled"] = function()
   h.eq(tags.IMAGE, result.tag)
 end
 
+-- FORK(vision): images are counted by their visual tokens
+T["Chat"]["add_image_message estimates an image by its dimensions"] = function()
+  local estimate = child.lua([[
+    _G.chat:add_image_message({
+      base64 = string.rep("A", 430096),
+      mimetype = "image/png",
+      id = "x",
+      dimensions = { width = 2560, height = 1080 },
+    })
+    return _G.chat.messages[#_G.chat.messages]._meta.estimated_tokens
+  ]])
+  h.eq(3588, estimate)
+end
+
+T["Chat"]["add_image_message assumes the ceiling without dimensions"] = function()
+  local estimate = child.lua([[
+    _G.chat:add_image_message({ base64 = string.rep("A", 430096), mimetype = "image/png", id = "x" })
+    return _G.chat.messages[#_G.chat.messages]._meta.estimated_tokens
+  ]])
+  h.eq(4784, estimate)
+end
+
+T["Chat"]["an image's estimate survives the backfill on chat creation"] = function()
+  local estimate = child.lua([[
+    local restored = require("codecompanion.interactions.chat").new({
+      messages = {
+        {
+          role = "user",
+          content = string.rep("A", 430096),
+          context = { mimetype = "image/png" },
+          _meta = { tag = require("codecompanion.interactions.shared.tags").IMAGE, estimated_tokens = 3588 },
+        },
+        { role = "llm", content = "A logo." },
+      },
+    })
+    for _, msg in ipairs(restored.messages) do
+      if msg.context and msg.context.mimetype then
+        return msg._meta.estimated_tokens
+      end
+    end
+  ]])
+  h.eq(3588, estimate)
+end
+-- /FORK(vision)
+
 T["Chat"]["a link to a file is attached and replaced with its path"] = function()
   local prompt =
     string.format("I want to share [File](%s) with you", vim.fs.normalize(vim.fn.getcwd()) .. "/tests/stubs/stub.go")

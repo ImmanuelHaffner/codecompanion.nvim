@@ -364,6 +364,58 @@ T["apply"]["does nothing when the token count is below all thresholds"] = functi
   h.eq(child.lua_get("_G.before"), child.lua_get("_G.chat.messages"))
 end
 
+-- FORK(vision): images are counted by their visual tokens
+T["apply"]["counts an image added since the last reported usage by its visual tokens"] = function()
+  child.lua([==[
+    _G.cm_config = {
+      enabled = true,
+      editing = { trigger = 10000, exclude_tools = {}, keep_cycles = 1 },
+      compaction = { trigger = 999999 },
+    }
+    require("codecompanion.config").interactions.chat.opts.context_management = _G.cm_config
+
+    _G.chat.cycle = 5
+    _G.chat.messages = {
+      {
+        role = "llm",
+        content = "",
+        _meta = { cycle = 1, id = 1 },
+        opts = { visible = false },
+        tools = {
+          calls = {
+            { id = "c1", type = "function", ["function"] = { name = "read_file", arguments = "{}" } },
+          },
+        },
+      },
+      {
+        role = "tool",
+        content = "file contents here",
+        _meta = { cycle = 1, id = 2, cumulative_tokens = 100 },
+        opts = { visible = true },
+        tools = { call_id = "c1", is_error = false, type = "tool_result" },
+      },
+    }
+
+    local base64 = string.rep("A", 430096)
+    _G.base64_tokens = require("codecompanion.utils.tokens").calculate(base64)
+    _G.chat:add_image_message({ base64 = base64, mimetype = "image/png", id = "x" })
+
+    local cm = require("codecompanion.interactions.chat.context_management")
+    cm.apply(_G.chat)
+    _G.edited_under_10000 = _G.chat.messages[2]._meta.context_management ~= nil
+
+    -- 100 reported plus 4,784 for the image crosses 4,800
+    _G.cm_config.editing.trigger = 4800
+    cm.apply(_G.chat)
+    _G.edited_under_4800 = _G.chat.messages[2]._meta.context_management ~= nil
+  ]==])
+
+  h.is_true(child.lua_get("_G.base64_tokens") > 10000)
+  h.eq(false, child.lua_get("_G.edited_under_10000"))
+  h.eq(true, child.lua_get("_G.edited_under_4800"))
+end
+-- /FORK(vision)
+
 T["auto submit"] = MiniTest.new_set({
   hooks = {
     pre_case = function()
