@@ -63,6 +63,31 @@ T["Skills"]["keeps discovering when a configured dir doesn't exist"] = function(
   h.eq(2, #skills)
 end
 
+T["Skills"]["the picker shows a multi-line description on one line"] = function()
+  local display = child.lua([[
+    package.loaded["codecompanion.config"] = { skills = { dirs = { "tests/stubs/skills/multiline" } } }
+    local skills = require("codecompanion.skills")
+    local display
+    vim.ui.select = function(items, opts)
+      display = opts.format_item(items[1])
+    end
+    require("codecompanion.skills.picker")
+      .build({
+        prompt = "Select a skill",
+        empty_message = "No skills found",
+        items = function()
+          return vim.tbl_map(function(skill)
+            return { name = skill.name, description = skill.description, skills = { skill.name } }
+          end, skills.list())
+        end,
+      })
+      .default({})
+    return display
+  ]])
+
+  h.eq('postmortem  Generates incident postmortems. Triggers on "write a postmortem".', display)
+end
+
 T["Skills in a chat"] = new_set({
   hooks = {
     pre_case = function()

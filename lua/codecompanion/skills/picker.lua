@@ -51,6 +51,8 @@ function M.build(opts)
 
     local width = name_column(items)
     for _, item in ipairs(items) do
+      -- A block-scalar description (`description: |`) keeps its newlines, but a picker row is one line
+      item.description = item.description and vim.trim((item.description:gsub("%s+", " ")))
       item.display = pad(item.name, width) .. "  " .. (item.description or "")
       item.text = item.display
       item.file = item.path
