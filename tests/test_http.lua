@@ -401,4 +401,38 @@ T["handles nil data with captured stream error"] = function()
   h.eq(result.err_received, "Request failed")
 end
 
+-- FORK(stream-errors)
+T["reports an SSE error event even though the stream completed with a 200"] = function()
+  local result = child.lua([[
+    _G.Client.static.methods.post = {
+      default = function(opts)
+        if opts.stream then
+          opts.stream(nil, 'data: {"type":"message_start","message":{"usage":{"input_tokens":1}}}')
+          opts.stream(nil, 'data: {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}')
+        end
+        -- plenary hands over the response table of the completed stream, status and all
+        opts.callback({ status = 200, body = "" })
+        return { args = "mocked args", shutdown = function() end }
+      end,
+    }
+
+    local adapter = __make_adapter({ opts = { method = "POST", stream = true } })
+    local err_received, chunks = nil, 0
+    local cb = function(err, data)
+      if err then err_received = err end
+      if data then chunks = chunks + 1 end
+    end
+
+    Client.new({ adapter = adapter }):request({ messages = {}, tools = {} }, { callback = cb }, {})
+
+    return { message = err_received and err_received.message, stderr = err_received and err_received.stderr, chunks = chunks }
+  ]])
+
+  h.eq(result.message, "Request failed")
+  h.expect_starts_with('{"type": "error"', result.stderr)
+  -- The error line itself never reaches the adapter as a chunk
+  h.eq(result.chunks, 1)
+end
+-- /FORK(stream-errors)
+
 return T

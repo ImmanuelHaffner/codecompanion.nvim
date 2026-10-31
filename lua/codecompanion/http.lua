@@ -430,7 +430,10 @@ function Client:request(payload, actions, opts)
         if data and data.status and data.status >= 400 then
           opts.status = "error"
           actions.callback({ message = string.format([[%d error: ]], data.status), stderr = data }, nil)
-        elseif not data and stream_error_body then
+        elseif stream_error_body then
+          -- FORK(stream-errors): plenary hands the completed stream's response table over even when an
+          -- error event ended it, so `not data` never held and a mid-stream error was reported nowhere
+          -- /FORK(stream-errors)
           opts.status = "error"
           actions.callback({ message = "Request failed", stderr = stream_error_body }, nil)
         end
@@ -466,10 +469,15 @@ function Client:request(payload, actions, opts)
     request_opts["stream"] = self.methods.schedule_wrap(function(_, data)
       if data and data ~= "" then
         response.write(data)
-        if data:match('^%s*{"error"') or data:match('^%s*{"type"%s*:%s*"error"') then
-          stream_error_body = data
+        -- FORK(stream-errors): an SSE error event arrives as `data: {"type":"error",...}`, so the
+        -- prefix has to come off before the body can be recognised as an error
+        -- Ref: https://platform.claude.com/docs/en/build-with-claude/streaming#error-events
+        local body = data:gsub("^%s*data:%s*", "")
+        if body:match('^%s*{"error"') or body:match('^%s*{"type"%s*:%s*"error"') then
+          stream_error_body = body
           return
         end
+        -- /FORK(stream-errors)
       end
       if not has_started_steaming then
         has_started_steaming = true
