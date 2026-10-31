@@ -964,12 +964,100 @@ T["Anthropic adapter"]["form_reasoning"] = function()
   local output = {
     content = "The user is asking if I'm working, which is a simple question to check if I'm functioning properly. This is a straightforward query that doesn't require any complex programming assistance or code analysis. I should give a brief, direct response confirming that I am functioning and ready to help with programming tasks.",
     _data = {
-      signature = "EukDCkYIBRgCKkDwVZaI617wvi1+P9+q9M1lGFO7ZOgkmyHvC+qfGNa4/nkNcjoTlxrrCAufnzn1SzSATglo7KdHwTrKRxn5KvqcEgyRopWqnZT5GR4VknIaDDG+2FBu65H7US7/AyIw8NGN1o2Zu6WwxROgr7TeAQU+D54dm7lxXoGKI6sXdmLfe7YKSJNDywkyrs5gTGeuKtACKYLIfqA3hL8qmWgTo7anYIaUTLAcT8bCsj3Kcugbg7QZBbQmy+xHKdE22lPTIZZw5vIVb3urA0LLoBQ0TliqFf2qT7G9oMCsoukKFqYn4cHaQNGib4YJjY3SIKDw+xYpgiF6HMjl5lKyrNMwiM7ZZ41z4nOBMFSvCJWPP4kDmaQjBuKT6Wq8HcN6QJQP+0AbAnJe922U+C1W9pXV/fZSNGEkCIMqimHWLu2Ld4FtyIEVjZqTlNg3zbP9UGzWRmqg9nsNnMCdThdHHteEXv+hVfYY4amyXIQvUsKG+EM16Z+mZrLSTzH4oFd2J3q5J1M9NAMJpGD1abaqYeNXNGd7WCkXE8ZiVgbpVhyCFVID1U0y/Fr01JFj2DWuyg/nqKSToViwvxNuzj14s/Q9gL6phvmF5aekmDqrGq3ngJAIRfiKaZBXkFEgvdgmg5GNA031GAE=",
+      blocks = {
+        {
+          type = "thinking",
+          thinking = "The user is asking if I'm working, which is a simple question to check if I'm functioning properly. This is a straightforward query that doesn't require any complex programming assistance or code analysis. I should give a brief, direct response confirming that I am functioning and ready to help with programming tasks.",
+          signature = "EukDCkYIBRgCKkDwVZaI617wvi1+P9+q9M1lGFO7ZOgkmyHvC+qfGNa4/nkNcjoTlxrrCAufnzn1SzSATglo7KdHwTrKRxn5KvqcEgyRopWqnZT5GR4VknIaDDG+2FBu65H7US7/AyIw8NGN1o2Zu6WwxROgr7TeAQU+D54dm7lxXoGKI6sXdmLfe7YKSJNDywkyrs5gTGeuKtACKYLIfqA3hL8qmWgTo7anYIaUTLAcT8bCsj3Kcugbg7QZBbQmy+xHKdE22lPTIZZw5vIVb3urA0LLoBQ0TliqFf2qT7G9oMCsoukKFqYn4cHaQNGib4YJjY3SIKDw+xYpgiF6HMjl5lKyrNMwiM7ZZ41z4nOBMFSvCJWPP4kDmaQjBuKT6Wq8HcN6QJQP+0AbAnJe922U+C1W9pXV/fZSNGEkCIMqimHWLu2Ld4FtyIEVjZqTlNg3zbP9UGzWRmqg9nsNnMCdThdHHteEXv+hVfYY4amyXIQvUsKG+EM16Z+mZrLSTzH4oFd2J3q5J1M9NAMJpGD1abaqYeNXNGd7WCkXE8ZiVgbpVhyCFVID1U0y/Fr01JFj2DWuyg/nqKSToViwvxNuzj14s/Q9gL6phvmF5aekmDqrGq3ngJAIRfiKaZBXkFEgvdgmg5GNA031GAE=",
+        },
+      },
     },
   }
 
   h.eq(output, adapter.handlers.form_reasoning(adapter, reasoning))
 end
+
+-- FORK(thinking-blocks)
+T["Anthropic adapter"]["form_reasoning keeps every block of a response, each with its own signature"] = function()
+  -- The 5.5 generation writes a reasoning block and a progress-update block before a tool call;
+  -- chunks arrive tagged with the content block index they belong to
+  local reasoning = {
+    { content = "", index = 0 },
+    { content = "Reasoning about ", index = 0 },
+    { content = "the DST bug.", index = 0 },
+    { signature = "sig_0", index = 0 },
+    { content = "", index = 1 },
+    { content = "Running the tests next.", index = 1 },
+    { signature = "sig_1", index = 1 },
+  }
+
+  h.eq({
+    content = "Reasoning about the DST bug.Running the tests next.",
+    _data = {
+      blocks = {
+        { type = "thinking", thinking = "Reasoning about the DST bug.", signature = "sig_0" },
+        { type = "thinking", thinking = "Running the tests next.", signature = "sig_1" },
+      },
+    },
+  }, adapter.handlers.form_reasoning(adapter, reasoning))
+end
+
+T["Anthropic adapter"]["form_reasoning carries a redacted_thinking block"] = function()
+  local reasoning = {
+    { content = "", index = 0, redacted = "opaque_encrypted_data" },
+    { content = "", index = 1 },
+    { content = "Visible summary.", index = 1 },
+    { signature = "sig_1", index = 1 },
+  }
+
+  h.eq({
+    content = "Visible summary.",
+    _data = {
+      blocks = {
+        { type = "redacted_thinking", data = "opaque_encrypted_data" },
+        { type = "thinking", thinking = "Visible summary.", signature = "sig_1" },
+      },
+    },
+  }, adapter.handlers.form_reasoning(adapter, reasoning))
+end
+
+T["Anthropic adapter"]["form_messages"]["replays every thinking block in order, ahead of the tool call"] = function()
+  local messages = {
+    { role = "user", content = "Fix the flaky test" },
+    {
+      role = "assistant",
+      content = "",
+      reasoning = {
+        content = "Reasoning.Progress.",
+        _data = {
+          blocks = {
+            { type = "redacted_thinking", data = "opaque" },
+            { type = "thinking", thinking = "Reasoning.", signature = "sig_0" },
+            { type = "thinking", thinking = "Progress.", signature = "sig_1" },
+            -- Cut off before its signature arrived: must not go back, the API rejects it
+            { type = "thinking", thinking = "Truncated", signature = "" },
+          },
+        },
+      },
+      tools = {
+        calls = {
+          { id = "toolu_1", type = "function", ["function"] = { name = "run_tests", arguments = '{"file":"t.lua"}' } },
+        },
+      },
+    },
+  }
+
+  local output = adapter.handlers.form_messages(adapter, messages)
+  local assistant = output.messages[2]
+  h.eq("redacted_thinking", assistant.content[1].type)
+  h.eq("opaque", assistant.content[1].data)
+  h.eq({ type = "thinking", thinking = "Reasoning.", signature = "sig_0" }, assistant.content[2])
+  h.eq({ type = "thinking", thinking = "Progress.", signature = "sig_1" }, assistant.content[3])
+  h.eq("text", assistant.content[4].type)
+  h.eq("tool_use", assistant.content[5].type)
+  h.eq(5, #assistant.content)
+end
+-- /FORK(thinking-blocks)
 
 T["Anthropic adapter"]["form_tools"] = function()
   local weather = require("tests.interactions.chat.tools.builtin.stubs.weather").schema

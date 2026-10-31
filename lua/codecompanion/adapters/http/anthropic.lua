@@ -388,21 +388,45 @@ return {
           m.tools = nil
         end
 
-        -- 8. If reasoning is present, format it as a content block
+        -- 8. If reasoning is present, format it as content blocks
         -- Reasoning carried over from another endpoint has no signature, and is dropped
-        if m.reasoning and m.reasoning._data and m.reasoning._data.signature and type(m.content) == "table" then
-          -- Ref: https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#how-extended-thinking-works
-          table.insert(m.content, 1, {
-            type = "thinking",
-            thinking = m.reasoning.content,
-            signature = m.reasoning._data.signature,
-          })
+        -- FORK(thinking-blocks): one response can carry several signed thinking blocks -- interleaved
+        -- thinking, and the progress update the 5.5 generation writes before each tool call. The API
+        -- verifies each signature against its own block and silently drops the reasoning of a merged or
+        -- partially replayed sequence, so the blocks go back one by one, in order, redacted_thinking
+        -- included. A bare `signature` is the pre-fork single-block shape of a saved chat.
+        -- Ref: https://platform.claude.com/docs/en/build-with-claude/thinking#preserving-thinking-blocks
+        if m.reasoning and m.reasoning._data and type(m.content) == "table" then
+          local blocks = m.reasoning._data.blocks
+          if not blocks and m.reasoning._data.signature then
+            blocks = { { type = "thinking", thinking = m.reasoning.content, signature = m.reasoning._data.signature } }
+          end
+          local pos = 1
+          for _, block in ipairs(blocks or {}) do
+            -- A thinking block without its signature is rejected outright; leaving it out only loses
+            -- that block's reasoning
+            local complete = (block.type == "thinking" and block.signature and block.signature ~= "")
+              or (block.type == "redacted_thinking" and block.data)
+            if complete then
+              table.insert(m.content, pos, block)
+              pos = pos + 1
+            end
+          end
         end
+        -- /FORK(thinking-blocks)
 
         -- 9. Include any compaction block from a previous response
         -- Ref: https://platform.claude.com/docs/en/build-with-claude/compaction
         if compaction and m.role == self.roles.llm and type(m.content) == "table" then
-          local insert_pos = (m.content[1] and m.content[1].type == "thinking") and 2 or 1
+          -- FORK(thinking-blocks): past every thinking block, not just the first
+          local insert_pos = 1
+          while
+            m.content[insert_pos]
+            and (m.content[insert_pos].type == "thinking" or m.content[insert_pos].type == "redacted_thinking")
+          do
+            insert_pos = insert_pos + 1
+          end
+          -- /FORK(thinking-blocks)
           table.insert(m.content, insert_pos, compaction)
         end
 
@@ -508,24 +532,51 @@ return {
     ---@param data table The reasoning output from the LLM
     ---@return nil|{ content: string, _data: table }
     form_reasoning = function(self, data)
+      -- FORK(thinking-blocks): chunks carry the index of the content block they belong to, so each
+      -- block is rebuilt on its own and keeps its own signature; form_messages replays them in order
+      local blocks, by_index = {}, {}
+      for _, item in ipairs(data) do
+        if item.blocks then
+          -- A non-streamed response arrives whole
+          vim.list_extend(blocks, item.blocks)
+        else
+          local key = item.index or "single"
+          local block = by_index[key]
+          if not block then
+            block = { type = "thinking", thinking = "" }
+            by_index[key] = block
+            table.insert(blocks, block)
+          end
+          if item.redacted then
+            block.type = "redacted_thinking"
+            block.data = item.redacted
+            block.thinking = nil
+          else
+            block.thinking = block.thinking .. (item.content or "")
+            if item.signature then
+              block.signature = (block.signature or "") .. item.signature
+            end
+          end
+        end
+      end
+
       local content = vim
-        .iter(data)
-        :map(function(item)
-          return item.content
+        .iter(blocks)
+        :map(function(block)
+          return block.thinking
         end)
-        :filter(function(content)
-          return content ~= nil
+        :filter(function(thinking)
+          return thinking ~= nil
         end)
         :join("")
-
-      local signature = data[#data].signature
 
       return {
         content = content,
         _data = {
-          signature = signature,
+          blocks = blocks,
         },
       }
+      -- /FORK(thinking-blocks)
     end,
 
     ---Provides the schemas of the tools that are available to the LLM to call
@@ -621,10 +672,13 @@ return {
             output.role = json.message.role
             output.content = ""
           elseif json.type == "content_block_start" then
+            -- FORK(thinking-blocks): remember which block a chunk belongs to, see form_reasoning
             if json.content_block.type == "thinking" then
-              output.reasoning = output.reasoning or {}
-              output.reasoning.content = ""
+              output.reasoning = { content = "", index = json.index }
+            elseif json.content_block.type == "redacted_thinking" then
+              output.reasoning = { content = "", index = json.index, redacted = json.content_block.data }
             end
+            -- /FORK(thinking-blocks)
             if json.content_block.type == "compaction" then
               output.meta = { compaction = { type = "compaction", content = "" } }
             end
@@ -639,11 +693,9 @@ return {
             end
           elseif json.type == "content_block_delta" then
             if json.delta.type == "thinking_delta" then
-              output.reasoning = output.reasoning or {}
-              output.reasoning.content = json.delta.thinking
+              output.reasoning = { content = json.delta.thinking, index = json.index }
             elseif json.delta.type == "signature_delta" then
-              output.reasoning = output.reasoning or {}
-              output.reasoning.signature = json.delta.signature
+              output.reasoning = { signature = json.delta.signature, index = json.index }
             elseif json.delta.type == "compaction_delta" then
               output.meta = { compaction = { type = "compaction", content = json.delta.content } }
             else
@@ -663,9 +715,12 @@ return {
             for i, content in ipairs(json.content) do
               if content.type == "text" then
                 output.content = (output.content or "") .. content.text
-              elseif content.type == "thinking" then
-                output.reasoning = output.reasoning and output.reasoning or {}
-                output.reasoning.content = content.text
+              elseif content.type == "thinking" or content.type == "redacted_thinking" then
+                -- FORK(thinking-blocks): keep every block whole for the round trip
+                output.reasoning = output.reasoning or { content = "", blocks = {} }
+                output.reasoning.content = output.reasoning.content .. (content.thinking or "")
+                table.insert(output.reasoning.blocks, content)
+                -- /FORK(thinking-blocks)
               elseif content.type == "compaction" then
                 output.meta = output.meta or {}
                 output.meta.compaction = { type = "compaction", content = content.content }
